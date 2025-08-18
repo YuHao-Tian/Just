@@ -5,6 +5,7 @@
     "columns": { "messages": "conversations" },
     "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
     "multi_modal": true,
+    "image_field": "images",
     "image_column": "images"
   },
   "coco_detjson_val": {
@@ -13,9 +14,11 @@
     "columns": { "messages": "conversations" },
     "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
     "multi_modal": true,
+    "image_field": "images",
     "image_column": "images"
   }
 }
+
 ——————————————————————————————————————————————————
 python - <<'PY'
 import json, os, re
