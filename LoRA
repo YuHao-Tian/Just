@@ -1,3 +1,77 @@
+cp /home/lf_data/train2017_detjson.jsonl /home/lf_data/train2017_detjson.bak.jsonl
+cp /home/lf_data/val2017_detjson.jsonl   /home/lf_data/val2017_detjson.bak.jsonl
+
+# 训练集
+python - <<'PY'
+import json, sys, os
+inp = "/home/lf_data/train2017_detjson.jsonl"
+out = "/home/lf_data/train2017_detjson_abs.jsonl"
+root = "/home/coco/images"
+n = 0
+with open(inp, "r") as fin, open(out, "w") as fout:
+    for line in fin:
+        obj = json.loads(line)
+        imgs = obj.get("images", [])
+        new_imgs = []
+        for p in imgs:
+            if not p.startswith("/"):
+                p = os.path.join(root, p)  # -> /home/coco/images/train2017/xxx.jpg
+            new_imgs.append(p)
+        obj["images"] = new_imgs
+        fout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        n += 1
+print(f"[done] {n} lines -> {out}")
+PY
+
+# 验证集
+python - <<'PY'
+import json, sys, os
+inp = "/home/lf_data/val2017_detjson.jsonl"
+out = "/home/lf_data/val2017_detjson_abs.jsonl"
+root = "/home/coco/images"
+n = 0
+with open(inp, "r") as fin, open(out, "w") as fout:
+    for line in fin:
+        obj = json.loads(line)
+        imgs = obj.get("images", [])
+        new_imgs = []
+        for p in imgs:
+            if not p.startswith("/"):
+                p = os.path.join(root, p)
+            new_imgs.append(p)
+        obj["images"] = new_imgs
+        fout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        n += 1
+print(f"[done] {n} lines -> {out}")
+PY
+
+
+
+head -n 1 /home/lf_data/train2017_detjson_abs.jsonl
+head -n 1 /home/lf_data/val2017_detjson_abs.jsonl
+
+
+
+{
+  "coco_detjson_train": {
+    "file_name": "train2017_detjson_abs.jsonl",
+    "format": "sharegpt",
+    "columns": { "messages": "conversations" },
+    "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
+    "multi_modal": true,
+    "image_field": "images"
+  },
+  "coco_detjson_val": {
+    "file_name": "val2017_detjson_abs.jsonl",
+    "format": "sharegpt",
+    "columns": { "messages": "conversations" },
+    "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
+    "multi_modal": true,
+    "image_field": "images"
+  }
+}
+
+
 source ~/llavaenv/bin/activate
 
 llamafactory-cli train \
@@ -7,7 +81,6 @@ llamafactory-cli train \
   --dataset_dir /home/lf_data \
   --dataset coco_detjson_train \
   --eval_dataset coco_detjson_val \
-  --image_dir /home/coco/images \
   --template llava \
   --cutoff_len 1024 \
   --learning_rate 5e-05 \
