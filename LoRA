@@ -304,3 +304,99 @@ source ~/llavaenv/bin/activate
   --remove_unused_columns false \
   --packing false \
   2>&1 | tee /home/vipuser/saves/quick_sanity.log
+
+________________
+[INFO|trainer.py:706] 2025-08-19 00:28:50,993 >> max_steps is given, it will override any value given in num_train_epochs
+[INFO|trainer.py:2409] 2025-08-19 00:28:51,243 >> ***** Running training *****
+[INFO|trainer.py:2410] 2025-08-19 00:28:51,243 >>   Num examples = 118,287
+[INFO|trainer.py:2411] 2025-08-19 00:28:51,243 >>   Num Epochs = 1
+[INFO|trainer.py:2412] 2025-08-19 00:28:51,243 >>   Instantaneous batch size per device = 2
+[INFO|trainer.py:2415] 2025-08-19 00:28:51,243 >>   Total train batch size (w. parallel, distributed & accumulation) = 16
+[INFO|trainer.py:2416] 2025-08-19 00:28:51,243 >>   Gradient Accumulation steps = 8
+[INFO|trainer.py:2417] 2025-08-19 00:28:51,243 >>   Total optimization steps = 5
+[INFO|trainer.py:2418] 2025-08-19 00:28:51,247 >>   Number of trainable parameters = 19,988,480
+  0%|          | 0/5 [00:00<?, ?it/s]Could not load library libcuda.so. Error: libcuda.so: cannot open shared object file: No such file or directory
+Traceback (most recent call last):
+  File "/home/vipuser/llavaenv/bin/llamafactory-cli", line 7, in <module>
+    sys.exit(main())
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/cli.py", line 151, in main
+    COMMAND_MAP[command]()
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/train/tuner.py", line 110, in run_exp
+    _training_function(config={"args": args, "callbacks": callbacks})
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/train/tuner.py", line 72, in _training_function
+    run_sft(model_args, data_args, training_args, finetuning_args, generating_args, callbacks)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/train/sft/workflow.py", line 96, in run_sft
+    train_result = trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/trainer.py", line 2240, in train
+    return inner_training_loop(
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/trainer.py", line 2555, in _inner_training_loop
+    tr_loss_step = self.training_step(model, inputs, num_items_in_batch)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/trainer.py", line 3745, in training_step
+    loss = self.compute_loss(model, inputs, num_items_in_batch=num_items_in_batch)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/train/sft/trainer.py", line 103, in compute_loss
+    return super().compute_loss(model, inputs, *args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/trainer.py", line 3810, in compute_loss
+    outputs = model(**inputs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/peft/peft_model.py", line 1757, in forward
+    return self.base_model(
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/peft/tuners/tuners_utils.py", line 193, in forward
+    return self.model.forward(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/utils/generic.py", line 969, in wrapper
+    output = func(self, *args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/models/llava/modeling_llava.py", line 438, in forward
+    outputs = self.model(
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/utils/generic.py", line 969, in wrapper
+    output = func(self, *args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/models/llava/modeling_llava.py", line 305, in forward
+    outputs = self.language_model(
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/utils/generic.py", line 969, in wrapper
+    output = func(self, *args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 453, in forward
+    layer_outputs = decoder_layer(
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/modeling_layers.py", line 47, in __call__
+    return self._gradient_checkpointing_func(partial(super().__call__, **kwargs), *args)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/model/model_utils/checkpointing.py", line 97, in custom_gradient_checkpointing_func
+    return gradient_checkpointing_func(func, *args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/_compile.py", line 32, in inner
+    return disable_fn(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/_dynamo/eval_frame.py", line 632, in _fn
+    return fn(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/utils/checkpoint.py", line 489, in checkpoint
+    return CheckpointFunction.apply(function, preserve, *args)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/autograd/function.py", line 575, in apply
+    return super().apply(*args, **kwargs)  # type: ignore[misc]
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/utils/checkpoint.py", line 264, in forward
+    outputs = run_function(*args)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 308, in forward
+    hidden_states, self_attn_weights = self.self_attn(
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 265, in forward
+    attn_output, attn_weights = attention_interface(
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/integrations/sdpa_attention.py", line 54, in sdpa_attention_forward
+    attn_output = torch.nn.functional.scaled_dot_product_attention(
+RuntimeError: cuDNN Frontend error: [cudnn_frontend] Error: No execution plans support the graph.
+  0%|          | 0/5 [00:01<?, ?it/s]
+
