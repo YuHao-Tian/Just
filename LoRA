@@ -1,11 +1,11 @@
-cp /home/lf_data/train2017_detjson.jsonl /home/lf_data/train2017_detjson.bak.jsonl
-cp /home/lf_data/val2017_detjson.jsonl   /home/lf_data/val2017_detjson.bak.jsonl
+cp /home/vipuser/lf_data/train2017_detjson.jsonl /home/vipuser/lf_data/train2017_detjson.bak.jsonl
+cp /home/vipuser/lf_data/val2017_detjson.jsonl   /home/vipuser/lf_data/val2017_detjson.bak.jsonl
 
 # 训练集
 python - <<'PY'
 import json, sys, os
-inp = "/home/lf_data/train2017_detjson.jsonl"
-out = "/home/lf_data/train2017_detjson_abs.jsonl"
+inp = "/home/vipuser/lf_data/train2017_detjson.jsonl"
+out = "/home/vipuser/lf_data/train2017_detjson_abs.jsonl"
 root = "/home/coco/images"
 n = 0
 with open(inp, "r") as fin, open(out, "w") as fout:
