@@ -107,3 +107,7 @@ python -u -m llamafactory.cli.train \
   --preprocessing_num_workers 4 \
   --dataloader_num_workers 2 \
   | tee /home/vipuser/saves/quick_sanity.log
+
+____________________
+/home/vipuser/llavaenv/bin/python: Error while finding module specification for 'llamafactory.cli.train' (ModuleNotFoundError: __path__ attribute not found on 'llamafactory.cli' while trying to find 'llamafactory.cli.train')
+
