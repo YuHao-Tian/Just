@@ -144,3 +144,23 @@ which llamafactory-cli
   --preprocessing_num_workers 4 \
   --dataloader_num_workers 2 \
   -u | tee /home/vipuser/saves/quick_sanity.log
+
+________________
+Got unknown args, potentially deprecated arguments: ['-u']
+Traceback (most recent call last):
+  File "/home/vipuser/llavaenv/bin/llamafactory-cli", line 7, in <module>
+    sys.exit(main())
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/cli.py", line 151, in main
+    COMMAND_MAP[command]()
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/train/tuner.py", line 110, in run_exp
+    _training_function(config={"args": args, "callbacks": callbacks})
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/train/tuner.py", line 55, in _training_function
+    model_args, data_args, training_args, finetuning_args, generating_args = get_train_args(args)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/hparams/parser.py", line 208, in get_train_args
+    model_args, data_args, training_args, finetuning_args, generating_args = _parse_train_args(args)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/hparams/parser.py", line 186, in _parse_train_args
+    return _parse_args(parser, args, allow_extra_keys=allow_extra_keys)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/hparams/parser.py", line 87, in _parse_args
+    raise ValueError(f"Some specified arguments are not used by the HfArgumentParser: {unknown_args}")
+ValueError: Some specified arguments are not used by the HfArgumentParser: ['-u']
+
