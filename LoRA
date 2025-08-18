@@ -59,6 +59,6 @@ llamafactory-cli train \
   --lora_alpha 16 \
   --lora_dropout 0.1 \
   --lora_target all \
+  --image_column images \
   --output_dir /home/vipuser/saves/lf_llava15_7b_coco_loraB
 
-——————
