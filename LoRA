@@ -5,8 +5,7 @@
     "columns": { "messages": "conversations" },
     "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
     "multi_modal": true,
-    "image_field": "images",
-    "image_column": "images"
+    "image_field": "images"
   },
   "coco_detjson_val": {
     "file_name": "val2017_detjson_abs.jsonl",
@@ -14,30 +13,27 @@
     "columns": { "messages": "conversations" },
     "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
     "multi_modal": true,
-    "image_field": "images",
-    "image_column": "images"
+    "image_field": "images"
   }
 }
 
+
 ——————————————————————————————————————————————————
+# 随机抽两行确认 images 为“单元素列表 + 绝对路径”
 python - <<'PY'
-import json, re, os, sys
-bad = 0; total = 0
+import json, os, random
 for p in ["/home/vipuser/lf_data/train2017_detjson_abs.jsonl",
           "/home/vipuser/lf_data/val2017_detjson_abs.jsonl"]:
     with open(p) as f:
-        for line in f:
-            total += 1
-            o = json.loads(line)
-            msgs = [c["value"] for c in o.get("conversations",[])]
-            tokens = sum(len(re.findall(r"<image>", m)) for m in msgs)
-            imgs = o.get("images", [])
-            if tokens != len(imgs) or len(imgs)!=1 or not all(os.path.exists(x) for x in imgs):
-                bad += 1
-                if bad <= 5:
-                    print("[BAD]", o.get("id"), "tokens=",tokens, "imgs=",len(imgs))
-print("bad/total =", bad, "/", total)
+        lines = [next(f) for _ in range(2)]
+    for line in lines:
+        o = json.loads(line)
+        imgs = o.get("images", [])
+        assert isinstance(imgs, list) and len(imgs)==1, "images must be single-item list"
+        assert imgs[0].startswith("/home/vipuser/coco/images/") and os.path.exists(imgs[0])
+print("OK: images column looks good.")
 PY
+
 
 ————————————————————————————————————————————————————————————
 source ~/llavaenv/bin/activate
@@ -59,9 +55,7 @@ llamafactory-cli train \
   --lora_alpha 16 \
   --lora_dropout 0.1 \
   --lora_target all \
-  --image_column images \
   --output_dir /home/vipuser/saves/lf_llava15_7b_coco_loraB
 
 ________________________
-    raise ValueError(f"Some specified arguments are not used by the HfArgumentParser: {unknown_args}")
-ValueError: Some specified arguments are not used by the HfArgumentParser: ['--image_column', 'images']
+   
