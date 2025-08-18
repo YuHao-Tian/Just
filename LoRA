@@ -400,3 +400,37 @@ Traceback (most recent call last):
 RuntimeError: cuDNN Frontend error: [cudnn_frontend] Error: No execution plans support the graph.
   0%|          | 0/5 [00:01<?, ?it/s]
 
+——————————————————————————————————————————————————
+source ~/llavaenv/bin/activate
+
+# 建议先清一次旧缓存（刚换了长度/packing 时才需要；保险起见可再清一次）
+rm -rf ~/.cache/huggingface/datasets/llamafactory_* ~/.cache/llamafactory/*
+
+/home/vipuser/llavaenv/bin/llamafactory-cli train \
+  --stage sft \
+  --finetuning_type lora \
+  --model_name_or_path /home/vipuser/llava-1.5-7b-hf \
+  --dataset_dir /home/vipuser/lf_data \
+  --dataset coco_detjson_train \
+  --eval_dataset coco_detjson_val \
+  --template llava \
+  --attn_implementation eager \
+  --cutoff_len 4096 \
+  --learning_rate 5e-05 \
+  --num_train_epochs 1 \
+  --per_device_train_batch_size 2 \
+  --gradient_accumulation_steps 8 \
+  --lora_rank 8 \
+  --lora_alpha 16 \
+  --lora_dropout 0.1 \
+  --lora_target all \
+  --do_train true \
+  --do_eval false \
+  --max_steps 5 \
+  --logging_steps 1 \
+  --report_to none \
+  --overwrite_output_dir true \
+  --overwrite_cache true \
+  --remove_unused_columns false \
+  --packing false \
+  2>&1 | tee /home/vipuser/saves/quick_sanity.log
