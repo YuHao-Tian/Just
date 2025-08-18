@@ -62,3 +62,6 @@ llamafactory-cli train \
   --image_column images \
   --output_dir /home/vipuser/saves/lf_llava15_7b_coco_loraB
 
+________________________
+    raise ValueError(f"Some specified arguments are not used by the HfArgumentParser: {unknown_args}")
+ValueError: Some specified arguments are not used by the HfArgumentParser: ['--image_column', 'images']
