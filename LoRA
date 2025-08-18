@@ -1,126 +1,3 @@
-cp /home/vipuser/lf_data/train2017_detjson.jsonl /home/vipuser/lf_data/train2017_detjson.bak.jsonl
-cp /home/vipuser/lf_data/val2017_detjson.jsonl   /home/vipuser/lf_data/val2017_detjson.bak.jsonl
-
-# 训练集
-python - <<'PY'
-import json, sys, os
-inp = "/home/vipuser/lf_data/train2017_detjson.jsonl"
-out = "/home/vipuser/lf_data/train2017_detjson_abs.jsonl"
-root = "/home/vipuser/coco/images"
-n = 0
-with open(inp, "r") as fin, open(out, "w") as fout:
-    for line in fin:
-        obj = json.loads(line)
-        imgs = obj.get("images", [])
-        new_imgs = []
-        for p in imgs:
-            if not p.startswith("/"):
-                p = os.path.join(root, p)  # -> /home/coco/images/train2017/xxx.jpg
-            new_imgs.append(p)
-        obj["images"] = new_imgs
-        fout.write(json.dumps(obj, ensure_ascii=False) + "\n")
-        n += 1
-print(f"[done] {n} lines -> {out}")
-PY
-
-# 验证集
-python - <<'PY'
-import json, sys, os
-inp = "/home/vipuser/lf_data/val2017_detjson.jsonl"
-out = "/home/vipuser/lf_data/val2017_detjson_abs.jsonl"
-root = "/home/vipuser/coco/images"
-n = 0
-with open(inp, "r") as fin, open(out, "w") as fout:
-    for line in fin:
-        obj = json.loads(line)
-        imgs = obj.get("images", [])
-        new_imgs = []
-        for p in imgs:
-            if not p.startswith("/"):
-                p = os.path.join(root, p)
-            new_imgs.append(p)
-        obj["images"] = new_imgs
-        fout.write(json.dumps(obj, ensure_ascii=False) + "\n")
-        n += 1
-print(f"[done] {n} lines -> {out}")
-PY
-
-
-
-head -n 1 /home/vipuser/lf_data/train2017_detjson_abs.jsonl
-head -n 1 /home/vipuser/lf_data/val2017_detjson_abs.jsonl
-
-
-
-{
-  "coco_detjson_train": {
-    "file_name": "train2017_detjson_abs.jsonl",
-    "format": "sharegpt",
-    "columns": { "messages": "conversations" },
-    "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
-    "multi_modal": true,
-    "image_field": "images"
-  },
-  "coco_detjson_val": {
-    "file_name": "val2017_detjson_abs.jsonl",
-    "format": "sharegpt",
-    "columns": { "messages": "conversations" },
-    "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
-    "multi_modal": true,
-    "image_field": "images"
-  }
-}
-
-
-source ~/llavaenv/bin/activate
-
-llamafactory-cli train \
-  --stage sft \
-  --finetuning_type lora \
-  --model_name_or_path /home/vipuser/llava-1.5-7b-hf \
-  --dataset_dir /home/vipuser/lf_data \
-  --dataset coco_detjson_train \
-  --eval_dataset coco_detjson_val \
-  --template llava \
-  --cutoff_len 1024 \
-  --learning_rate 5e-05 \
-  --num_train_epochs 3 \
-  --per_device_train_batch_size 2 \
-  --gradient_accumulation_steps 8 \
-  --lora_rank 8 \
-  --lora_alpha 16 \
-  --lora_dropout 0.1 \
-  --lora_target all \
-  --output_dir /home/vipuser/saves/lf_llava15_7b_coco_loraB
-
-
-
-training example:
-Traceback (most recent call last):
-  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/data/loader.py", line 267, in _get_preprocessed_dataset
-    dataset_processor.print_data_example(next(iter(dataset)))
-StopIteration
-
-During handling of the above exception, another exception occurred:
-
-Traceback (most recent call last):
-  File "/home/vipuser/llavaenv/bin/llamafactory-cli", line 7, in <module>
-    sys.exit(main())
-  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/cli.py", line 151, in main
-    COMMAND_MAP[command]()
-  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/train/tuner.py", line 110, in run_exp
-    _training_function(config={"args": args, "callbacks": callbacks})
-  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/train/tuner.py", line 72, in _training_function
-    run_sft(model_args, data_args, training_args, finetuning_args, generating_args, callbacks)
-  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/train/sft/workflow.py", line 51, in run_sft
-    dataset_module = get_dataset(template, model_args, data_args, training_args, stage="sft", **tokenizer_module)
-  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/data/loader.py", line 315, in get_dataset
-    dataset = _get_preprocessed_dataset(
-  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/data/loader.py", line 272, in _get_preprocessed_dataset
-    raise RuntimeError("Cannot find valid samples, check `data/README.md` for the data format.")
-RuntimeError: Cannot find valid samples, check `data/README.md` for the data format.
-
-————————————————————————————————————————
 {
   "coco_detjson_train": {
     "file_name": "train2017_detjson_abs.jsonl",
@@ -128,7 +5,7 @@ RuntimeError: Cannot find valid samples, check `data/README.md` for the data for
     "columns": { "messages": "conversations" },
     "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
     "multi_modal": true,
-    "image_field": "images"
+    "image_column": "images"
   },
   "coco_detjson_val": {
     "file_name": "val2017_detjson_abs.jsonl",
@@ -136,25 +13,22 @@ RuntimeError: Cannot find valid samples, check `data/README.md` for the data for
     "columns": { "messages": "conversations" },
     "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
     "multi_modal": true,
-    "image_field": "images"
+    "image_column": "images"
   }
 }
-——————————————————————————————————————————————————————————
-# 1) JSONL 至少有一行
-head -n 1 /home/vipuser/lf_data/train2017_detjson_abs.jsonl | jq .
-
-# 2) 检查这一行里的 images 路径是否存在
+——————————————————————————————————————————————————
 python - <<'PY'
-import json, os
+import json, os, re
 p="/home/vipuser/lf_data/train2017_detjson_abs.jsonl"
 with open(p) as f:
     obj=json.loads(next(f))
-img=obj["images"][0]
-print("img:", img, "exists:", os.path.exists(img))
-print("has conversations:", isinstance(obj.get("conversations"), list))
+msgs=[c["value"] for c in obj["conversations"]]
+tokens=sum(len(re.findall(r"<image>", m)) for m in msgs)
+imgs=obj.get("images", [])
+print("tokens=", tokens, "imgs=", len(imgs), "ok=", tokens==len(imgs))
+print("exists=", all(os.path.exists(x) for x in imgs), "example_img=", imgs[0] if imgs else None)
 PY
-
-————————————————————————————————————————————————
+————————————————————————————————————————————————————————————
 source ~/llavaenv/bin/activate
 
 llamafactory-cli train \
@@ -175,12 +49,5 @@ llamafactory-cli train \
   --lora_dropout 0.1 \
   --lora_target all \
   --output_dir /home/vipuser/saves/lf_llava15_7b_coco_loraB
-____________________________________________
-  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/data/processor/supervised.py", line 43, in _encode_data_example
-    messages = self.template.mm_plugin.process_messages(prompt + response, images, videos, audios, self.processor)
-  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/data/mm_plugin.py", line 776, in process_messages
-    self._validate_messages(messages, images, videos, audios)
-  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/data/mm_plugin.py", line 205, in _validate_messages
-    raise ValueError(
-ValueError: The number of images does not match the number of <image> tokens in [{'content': '<image>\nYou are an object detection assistant. Return ONLY a valid JSON object with key \'detections\'. Each item: {"label": <one of COCO-80>, "box": [x1,y1,x2,y2], "confidence": [0,1]}. Coordinates are normalized to [0,1] with (x1,y1)=top-left and (x2,y2)=bottom-right. If nothing is found, return {"detections":[]}. Output JSON only.', 'role': 'user'}, {'content': '{"detections": [{"label": "motorcycle", "box": [0.561203125, 0.40602777777777777, 0.73690625, 0.9992777777777778], "confidence": 1.0}, {"label": "person", "box": [0.5310625, 0.06155555555555556, 0.7715, 0.8969166666666668], "confidence": 1.0}, {"label": "person", "box": [0.7369375, 0.4800555555555555, 0.7930625, 0.6136666666666666], "confidence": 1.0}, {"label": "bicycle", "box": [0.759390625, 0.5091944444444445, 0.80725, 0.6063611111111111], "confidence": 1.0}]}', 'role': 'assistant'}].
 
+——————
