@@ -119,3 +119,38 @@ Traceback (most recent call last):
   File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/data/loader.py", line 272, in _get_preprocessed_dataset
     raise RuntimeError("Cannot find valid samples, check `data/README.md` for the data format.")
 RuntimeError: Cannot find valid samples, check `data/README.md` for the data format.
+
+————————————————————————————————————————
+{
+  "coco_detjson_train": {
+    "file_name": "train2017_detjson_abs.jsonl",
+    "formatting": "sharegpt",
+    "columns": { "messages": "conversations" },
+    "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
+    "multi_modal": true,
+    "image_field": "images"
+  },
+  "coco_detjson_val": {
+    "file_name": "val2017_detjson_abs.jsonl",
+    "formatting": "sharegpt",
+    "columns": { "messages": "conversations" },
+    "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
+    "multi_modal": true,
+    "image_field": "images"
+  }
+}
+——————————————————————————————————————————————————————————
+# 1) JSONL 至少有一行
+head -n 1 /home/vipuser/lf_data/train2017_detjson_abs.jsonl | jq .
+
+# 2) 检查这一行里的 images 路径是否存在
+python - <<'PY'
+import json, os
+p="/home/vipuser/lf_data/train2017_detjson_abs.jsonl"
+with open(p) as f:
+    obj=json.loads(next(f))
+img=obj["images"][0]
+print("img:", img, "exists:", os.path.exists(img))
+print("has conversations:", isinstance(obj.get("conversations"), list))
+PY
+
