@@ -571,3 +571,13 @@ python -u /home/vipuser/eval_llava_coco_pretrain.py \
   --val-img  /home/vipuser/coco/images/val2017 \
   --subset 0 --tokens 160 \
   --out /home/vipuser/coco/llava_dt_base_full.json
+
+  ---------------------------------
+
+  python /home/vipuser/coco_to_lf_jsonl.py \
+  --ann /home/vipuser/coco/annotations/instances_train2017.json \
+  --imgroot /home/vipuser/coco/images \
+  --split train2017 \
+  --out /home/vipuser/lf_data/train2017_detjson.jsonl \
+  --max_dets 15
+
