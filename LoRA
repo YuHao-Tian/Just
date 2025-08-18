@@ -191,3 +191,84 @@ source ~/llavaenv/bin/activate
   --report_to none \
   --overwrite_output_dir true \
   2>&1 | tee /home/vipuser/saves/quick_sanity.log
+____________________
+
+[INFO|modeling_utils.py:2241] 2025-08-19 00:02:32,433 >> Instantiating CLIPVisionModel model under default dtype torch.float16.
+[INFO|modeling_utils.py:2241] 2025-08-19 00:02:32,471 >> Instantiating LlamaModel model under default dtype torch.float16.
+Loading checkpoint shards: 100%|██████████| 3/3 [00:32<00:00, 10.98s/it]
+[INFO|modeling_utils.py:5131] 2025-08-19 00:03:05,454 >> All model checkpoint weights were used when initializing LlavaForConditionalGeneration.
+
+[INFO|modeling_utils.py:5139] 2025-08-19 00:03:05,454 >> All the weights of LlavaForConditionalGeneration were initialized from the model checkpoint at /home/vipuser/llava-1.5-7b-hf.
+If your task is similar to the task the model of the checkpoint was trained on, you can already use LlavaForConditionalGeneration for predictions without further training.
+[INFO|configuration_utils.py:1088] 2025-08-19 00:03:05,459 >> loading configuration file /home/vipuser/llava-1.5-7b-hf/generation_config.json
+[INFO|configuration_utils.py:1135] 2025-08-19 00:03:05,460 >> Generate config GenerationConfig {
+  "bos_token_id": 1,
+  "eos_token_id": 2,
+  "pad_token_id": 32001
+}
+
+[INFO|2025-08-19 00:03:05] llamafactory.model.model_utils.checkpointing:143 >> Gradient checkpointing enabled.
+[INFO|2025-08-19 00:03:05] llamafactory.model.model_utils.attention:143 >> Using torch SDPA for faster training and inference.
+[INFO|2025-08-19 00:03:05] llamafactory.model.adapter:143 >> Upcasting trainable params to float32.
+[INFO|2025-08-19 00:03:05] llamafactory.model.adapter:143 >> Fine-tuning method: LoRA
+[INFO|2025-08-19 00:03:05] llamafactory.model.model_utils.misc:143 >> Found linear modules: gate_proj,k_proj,down_proj,q_proj,o_proj,v_proj,up_proj
+[INFO|2025-08-19 00:03:05] llamafactory.model.model_utils.visual:143 >> Set vision model not trainable: ['vision_tower'].
+[INFO|2025-08-19 00:03:05] llamafactory.model.model_utils.visual:143 >> Set multi model projector not trainable: multi_modal_projector.
+[INFO|2025-08-19 00:03:06] llamafactory.model.loader:143 >> trainable params: 19,988,480 || all params: 7,083,415,552 || trainable%: 0.2822
+[INFO|trainer.py:706] 2025-08-19 00:03:06,664 >> max_steps is given, it will override any value given in num_train_epochs
+[INFO|trainer.py:2409] 2025-08-19 00:03:07,029 >> ***** Running training *****
+[INFO|trainer.py:2410] 2025-08-19 00:03:07,029 >>   Num examples = 118,287
+[INFO|trainer.py:2411] 2025-08-19 00:03:07,029 >>   Num Epochs = 1
+[INFO|trainer.py:2412] 2025-08-19 00:03:07,029 >>   Instantaneous batch size per device = 2
+[INFO|trainer.py:2415] 2025-08-19 00:03:07,029 >>   Total train batch size (w. parallel, distributed & accumulation) = 16
+[INFO|trainer.py:2416] 2025-08-19 00:03:07,029 >>   Gradient Accumulation steps = 8
+[INFO|trainer.py:2417] 2025-08-19 00:03:07,029 >>   Total optimization steps = 5
+[INFO|trainer.py:2418] 2025-08-19 00:03:07,033 >>   Number of trainable parameters = 19,988,480
+  0%|          | 0/5 [00:00<?, ?it/s]Traceback (most recent call last):
+  File "/home/vipuser/llavaenv/bin/llamafactory-cli", line 7, in <module>
+    sys.exit(main())
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/cli.py", line 151, in main
+    COMMAND_MAP[command]()
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/train/tuner.py", line 110, in run_exp
+    _training_function(config={"args": args, "callbacks": callbacks})
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/train/tuner.py", line 72, in _training_function
+    run_sft(model_args, data_args, training_args, finetuning_args, generating_args, callbacks)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/train/sft/workflow.py", line 96, in run_sft
+    train_result = trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/trainer.py", line 2240, in train
+    return inner_training_loop(
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/trainer.py", line 2555, in _inner_training_loop
+    tr_loss_step = self.training_step(model, inputs, num_items_in_batch)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/trainer.py", line 3745, in training_step
+    loss = self.compute_loss(model, inputs, num_items_in_batch=num_items_in_batch)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/llamafactory/train/sft/trainer.py", line 103, in compute_loss
+    return super().compute_loss(model, inputs, *args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/trainer.py", line 3810, in compute_loss
+    outputs = model(**inputs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/peft/peft_model.py", line 1757, in forward
+    return self.base_model(
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/peft/tuners/tuners_utils.py", line 193, in forward
+    return self.model.forward(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/utils/generic.py", line 969, in wrapper
+    output = func(self, *args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/models/llava/modeling_llava.py", line 438, in forward
+    outputs = self.model(
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/utils/generic.py", line 969, in wrapper
+    output = func(self, *args, **kwargs)
+  File "/home/vipuser/llavaenv/lib/python3.10/site-packages/transformers/models/llava/modeling_llava.py", line 299, in forward
+    raise ValueError(
+ValueError: Image features and image tokens do not match: tokens: 1115, features 1152
+  0%|          | 0/5 [00:01<?, ?it/s]
+
