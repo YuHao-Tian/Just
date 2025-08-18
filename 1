@@ -290,13 +290,14 @@ python /home/vipuser/eval_llava_coco_pretrain.py \
 
 
 ----------------------------------------
-import os, json, argparse, time, sys
+import os, json, argparse, time, sys, re
 import torch
 from PIL import Image
 from transformers import AutoProcessor, LlavaForConditionalGeneration
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
+# ---------- utilities ----------
 def try_parse_json(text: str):
     try:
         s, e = text.find("{"), text.rfind("}")
@@ -305,6 +306,57 @@ def try_parse_json(text: str):
     except Exception:
         pass
     return {"detections": []}
+
+def to_float(x, default=0.0):
+    """Coerce x -> float in [0,1] if possible. Handle list/str/%/>1."""
+    try:
+        if isinstance(x, list) and len(x) > 0:
+            x = x[0]
+        if isinstance(x, str):
+            x = x.strip().replace("%", "")
+        v = float(x)
+        if v > 1.0:
+            # assume 0~100 percentage
+            v = v / 100.0 if v <= 100.0 else 1.0
+        if v < 0.0:
+            v = 0.0
+        if v > 1.0:
+            v = 1.0
+        return v
+    except Exception:
+        return default
+
+def to_box(b):
+    """Coerce various box formats to [x1,y1,x2,y2] in [0,1]; return None if fail."""
+    def flat4(lst):
+        out = []
+        for el in lst:
+            if isinstance(el, (list, tuple)):
+                out.extend(flat4(el))
+            else:
+                out.append(el)
+        return out
+    if isinstance(b, dict):
+        xs = [b.get("x1",0), b.get("y1",0), b.get("x2",0), b.get("y2",0)]
+        x1,y1,x2,y2 = [to_float(v,0.0) for v in xs]
+    elif isinstance(b, (list, tuple)):
+        lst = flat4(list(b))
+        if len(lst) < 4: return None
+        x1,y1,x2,y2 = [to_float(lst[i],0.0) for i in range(4)]
+    elif isinstance(b, str):
+        nums = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", b)
+        if len(nums) < 4: return None
+        x1,y1,x2,y2 = [to_float(nums[i],0.0) for i in range(4)]
+    else:
+        return None
+    # clamp to [0,1] and fix order
+    x1 = min(max(x1,0.0),1.0); y1 = min(max(y1,0.0),1.0)
+    x2 = min(max(x2,0.0),1.0); y2 = min(max(y2,0.0),1.0)
+    if x2 < x1: x1, x2 = x2, x1
+    if y2 < y1: y1, y2 = y2, y1
+    if (x2 - x1) <= 1e-6 or (y2 - y1) <= 1e-6:
+        return None
+    return [x1,y1,x2,y2]
 
 def build_canon_label(name2id):
     name_set = set(name2id.keys())
@@ -323,7 +375,7 @@ def build_canon_label(name2id):
     }
     def canon(raw: str):
         s = (raw or "").lower().strip().replace("_"," ").replace("-"," ")
-        while "  " in s: s = s.replace("  ", " ")
+        while "  " in s: s = s.replace("  "," ")
         if s in name_set: return s
         if s in syn: return syn[s]
         key = s.replace(" ","")
@@ -340,7 +392,7 @@ def gen_and_decode_reply(model, proc, img, prompt, device, max_new_tokens=160):
             return_dict_in_generate=True
         )
     seq = out.sequences[0]
-    gen_ids = seq[inputs["input_ids"].shape[-1]:]  # decode only newly generated tokens
+    gen_ids = seq[inputs["input_ids"].shape[-1]:]  # decode only new tokens
     return proc.decode(gen_ids, skip_special_tokens=True).strip()
 
 def labels_invalid(dets, allowed_lower: set):
@@ -350,6 +402,7 @@ def labels_invalid(dets, allowed_lower: set):
             return True
     return False
 
+# ---------- main ----------
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-dir", default="/home/vipuser/llava-1.5-7b-hf")
@@ -359,7 +412,7 @@ def main():
     ap.add_argument("--tokens",   type=int, default=160)
     ap.add_argument("--out",      default="/home/vipuser/coco/llava_dt_base.json")
     ap.add_argument("--metrics",  default="/home/vipuser/coco/llava_metrics_base.json")
-    ap.add_argument("--raw_debug_first", type=int, default=0, help="print RAW/RETRY for first N images")
+    ap.add_argument("--raw_debug_first", type=int, default=0)
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -403,12 +456,13 @@ def main():
         messages = [{"role":"user","content":[{"type":"image"},{"type":"text","text":instr}]}]
         prompt = proc.apply_chat_template(messages, add_generation_prompt=True)
 
+        # First pass
         txt = gen_and_decode_reply(model, proc, img, prompt, device, max_new_tokens=args.tokens)
         if k <= args.raw_debug_first:
             print(f"==== RAW (image {k}: {fn}) ====\n{txt}")
-
         data = try_parse_json(txt)
 
+        # Retry JSON
         if not isinstance(data.get("detections", None), list):
             retry = [{"role":"user","content":[
                 {"type":"image"},
@@ -421,6 +475,7 @@ def main():
             data = try_parse_json(txt2)
 
         dets = data.get("detections", [])
+        # Retry labels
         if isinstance(dets, list) and labels_invalid(dets, allowed):
             retry2 = [{"role":"user","content":[
                 {"type":"image"},
@@ -438,20 +493,26 @@ def main():
         if isinstance(dets, list):
             ok_json += 1
 
+        # Convert and append
         for d in dets[:15]:
-            if not isinstance(d, dict) or "box" not in d: continue
-            lab = canon_label(d.get("label", ""))
-            if lab is None: continue
-            try:
-                x1, y1, x2, y2 = d["box"]
-            except Exception:
+            if not isinstance(d, dict) or "box" not in d:
                 continue
+            lab = canon_label(d.get("label", ""))
+            if lab is None:
+                continue
+            box = to_box(d.get("box"))
+            if box is None:
+                continue
+            x1,y1,x2,y2 = box
             x, y, w, h = x1*W, y1*H, (x2-x1)*W, (y2-y1)*H
+            if w <= 1e-6 or h <= 1e-6:
+                continue
+            score = to_float(d.get("confidence", 0.9), default=0.9)
             dt.append({
                 "image_id": int(img_id),
                 "category_id": name2id[lab],
                 "bbox": [float(x), float(y), float(w), float(h)],
-                "score": float(d.get("confidence", 0.9))
+                "score": float(score)
             })
 
         if (k % 50 == 0) or (k == len(ids)):
@@ -467,7 +528,7 @@ def main():
     metrics = {"mAP": 0.0, "AP50": 0.0, "AP75": 0.0, "AR@1": 0.0, "AR@10": 0.0, "AR@100": 0.0,
                "json_success_rate": jsucc, "images": len(ids), "detections": len(dt)}
     if len(dt) == 0:
-        print("[warn] No detections recorded. mAP will be 0.0. Check outputs or proceed to LoRA finetuning.")
+        print("[warn] No detections recorded. mAP will be 0.0. Proceed to LoRA finetuning or adjust prompts.")
     else:
         res = coco.loadRes(args.out)
         e = COCOeval(coco, res, "bbox")
@@ -489,6 +550,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 ---------------------------------------
 source ~/llavaenv/bin/activate
 pip install -U pycocotools
