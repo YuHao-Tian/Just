@@ -289,6 +289,216 @@ python /home/vipuser/eval_llava_coco_pretrain.py \
   --out /home/vipuser/coco/llava_dt_base.json
 
 
+----------------------------------------
+import os, json, argparse, time, sys
+import torch
+from PIL import Image
+from transformers import AutoProcessor, LlavaForConditionalGeneration
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
 
+def try_parse_json(text: str):
+    try:
+        s, e = text.find("{"), text.rfind("}")
+        if s != -1 and e != -1 and e > s:
+            return json.loads(text[s:e+1])
+    except Exception:
+        pass
+    return {"detections": []}
 
+def build_canon_label(name2id):
+    name_set = set(name2id.keys())
+    no_space_map = {n.replace(" ", ""): n for n in name_set}
+    syn = {
+        "people":"person","man":"person","woman":"person","men":"person","women":"person",
+        "boy":"person","girl":"person","kid":"person","child":"person","baby":"person",
+        "motorbike":"motorcycle","aeroplane":"airplane","aircraft":"airplane",
+        "trafficlight":"traffic light","traffic-light":"traffic light",
+        "tvmonitor":"tv","tv monitor":"tv","television":"tv",
+        "cellphone":"cell phone","mobile phone":"cell phone","smartphone":"cell phone","iphone":"cell phone",
+        "sofa":"couch","pottedplant":"potted plant","potted plant":"potted plant",
+        "diningtable":"dining table","hand bag":"handbag","hand-bag":"handbag",
+        "wineglass":"wine glass","wine-glass":"wine glass",
+        "tennis-racket":"tennis racket","baseball-bat":"baseball bat","baseball-glove":"baseball glove"
+    }
+    def canon(raw: str):
+        s = (raw or "").lower().strip().replace("_"," ").replace("-"," ")
+        while "  " in s: s = s.replace("  ", " ")
+        if s in name_set: return s
+        if s in syn: return syn[s]
+        key = s.replace(" ","")
+        if key in no_space_map: return no_space_map[key]
+        return None
+    return canon
 
+def gen_and_decode_reply(model, proc, img, prompt, device, max_new_tokens=160):
+    inputs = proc(images=img, text=prompt, return_tensors="pt")
+    inputs = {k:(v.to(device) if hasattr(v,"to") else v) for k,v in inputs.items()}
+    with torch.inference_mode():
+        out = model.generate(
+            **inputs, max_new_tokens=max_new_tokens, do_sample=False,
+            return_dict_in_generate=True
+        )
+    seq = out.sequences[0]
+    gen_ids = seq[inputs["input_ids"].shape[-1]:]  # decode only newly generated tokens
+    return proc.decode(gen_ids, skip_special_tokens=True).strip()
+
+def labels_invalid(dets, allowed_lower: set):
+    for d in dets:
+        lab = str(d.get("label","")).lower()
+        if ("<" in lab) or (lab not in allowed_lower):
+            return True
+    return False
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model-dir", default="/home/vipuser/llava-1.5-7b-hf")
+    ap.add_argument("--val-ann",  default="/home/vipuser/coco/annotations/instances_val2017.json")
+    ap.add_argument("--val-img",  default="/home/vipuser/coco/images/val2017")
+    ap.add_argument("--subset",   type=int, default=500, help="first N images (0=all 5000)")
+    ap.add_argument("--tokens",   type=int, default=160)
+    ap.add_argument("--out",      default="/home/vipuser/coco/llava_dt_base.json")
+    ap.add_argument("--metrics",  default="/home/vipuser/coco/llava_metrics_base.json")
+    ap.add_argument("--raw_debug_first", type=int, default=0, help="print RAW/RETRY for first N images")
+    args = ap.parse_args()
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype  = torch.bfloat16 if device == "cuda" else torch.float32
+
+    model = LlavaForConditionalGeneration.from_pretrained(args.model_dir, torch_dtype=dtype).to(device).eval()
+    proc  = AutoProcessor.from_pretrained(args.model_dir)
+
+    coco = COCO(args.val_ann)
+    cats = coco.loadCats(coco.getCatIds())
+    class_names = [c["name"] for c in cats]
+    name2id = {c["name"].lower(): c["id"] for c in cats}
+    canon_label = build_canon_label(name2id)
+    allowed = set([n.lower() for n in class_names])
+
+    imgs = coco.dataset["images"]
+    ids  = [im["id"] for im in imgs]
+    info = {im["id"]:(im["file_name"], im["width"], im["height"]) for im in imgs}
+    if args.subset and args.subset > 0:
+        ids = ids[:args.subset]
+    print(f"[info] subset = {len(ids)} images")
+
+    instr = (
+        "You are an object detection assistant. "
+        "Return ONLY a valid JSON object with key 'detections'. "
+        "Each item: {\"label\": <one of COCO-80>, \"box\": [x1,y1,x2,y2], \"confidence\": [0,1]}. "
+        "Coordinates are normalized to [0,1] with (x1,y1)=top-left and (x2,y2)=bottom-right. "
+        "If nothing is found, return {\"detections\":[]}. "
+        "Use ONLY these labels (singular, English): " + ", ".join(class_names) + ". "
+        "At most 15 objects. Output JSON only."
+    )
+
+    dt = []
+    ok_json = 0
+    t0 = time.time()
+
+    for k, img_id in enumerate(ids, 1):
+        fn, W, H = info[img_id]
+        img = Image.open(os.path.join(args.val_img, fn)).convert("RGB")
+
+        messages = [{"role":"user","content":[{"type":"image"},{"type":"text","text":instr}]}]
+        prompt = proc.apply_chat_template(messages, add_generation_prompt=True)
+
+        txt = gen_and_decode_reply(model, proc, img, prompt, device, max_new_tokens=args.tokens)
+        if k <= args.raw_debug_first:
+            print(f"==== RAW (image {k}: {fn}) ====\n{txt}")
+
+        data = try_parse_json(txt)
+
+        if not isinstance(data.get("detections", None), list):
+            retry = [{"role":"user","content":[
+                {"type":"image"},
+                {"type":"text","text":"Only output valid JSON with the key 'detections'. No extra words."}
+            ]}]
+            rprompt = proc.apply_chat_template(retry, add_generation_prompt=True)
+            txt2 = gen_and_decode_reply(model, proc, img, rprompt, device, max_new_tokens=128)
+            if k <= args.raw_debug_first:
+                print(f"==== RETRY-JSON (image {k}) ====\n{txt2}")
+            data = try_parse_json(txt2)
+
+        dets = data.get("detections", [])
+        if isinstance(dets, list) and labels_invalid(dets, allowed):
+            retry2 = [{"role":"user","content":[
+                {"type":"image"},
+                {"type":"text","text":
+                 "Rewrite as JSON using ONLY these labels: " + ", ".join(class_names) +
+                 ". Do NOT use placeholders. Output JSON only."}
+            ]}]
+            rprompt2 = proc.apply_chat_template(retry2, add_generation_prompt=True)
+            txt_fix = gen_and_decode_reply(model, proc, img, rprompt2, device, max_new_tokens=128)
+            if k <= args.raw_debug_first:
+                print(f"==== RETRY-LABELS (image {k}) ====\n{txt_fix}")
+            data = try_parse_json(txt_fix)
+            dets = data.get("detections", [])
+
+        if isinstance(dets, list):
+            ok_json += 1
+
+        for d in dets[:15]:
+            if not isinstance(d, dict) or "box" not in d: continue
+            lab = canon_label(d.get("label", ""))
+            if lab is None: continue
+            try:
+                x1, y1, x2, y2 = d["box"]
+            except Exception:
+                continue
+            x, y, w, h = x1*W, y1*H, (x2-x1)*W, (y2-y1)*H
+            dt.append({
+                "image_id": int(img_id),
+                "category_id": name2id[lab],
+                "bbox": [float(x), float(y), float(w), float(h)],
+                "score": float(d.get("confidence", 0.9))
+            })
+
+        if (k % 50 == 0) or (k == len(ids)):
+            print(f"[{k}/{len(ids)}] dt={len(dt)}")
+
+    with open(args.out, "w") as f:
+        json.dump(dt, f)
+    jsucc = ok_json / len(ids) if len(ids) else 0.0
+    print(f"[saved] {args.out}")
+    print(f"[info] JSON success rate: {ok_json}/{len(ids)} = {jsucc:.2%}")
+    print(f"[time] processed {len(ids)} images in {time.time()-t0:.1f}s")
+
+    metrics = {"mAP": 0.0, "AP50": 0.0, "AP75": 0.0, "AR@1": 0.0, "AR@10": 0.0, "AR@100": 0.0,
+               "json_success_rate": jsucc, "images": len(ids), "detections": len(dt)}
+    if len(dt) == 0:
+        print("[warn] No detections recorded. mAP will be 0.0. Check outputs or proceed to LoRA finetuning.")
+    else:
+        res = coco.loadRes(args.out)
+        e = COCOeval(coco, res, "bbox")
+        e.evaluate(); e.accumulate(); e.summarize()
+        metrics.update({
+            "mAP":   float(e.stats[0]),
+            "AP50":  float(e.stats[1]),
+            "AP75":  float(e.stats[2]),
+            "AR@1":  float(e.stats[6]),
+            "AR@10": float(e.stats[7]),
+            "AR@100":float(e.stats[8]),
+        })
+        print(f"[metrics] mAP@[.50:.95]={metrics['mAP']:.4f} | AP50={metrics['AP50']:.4f} | AR@100={metrics['AR@100']:.4f}")
+
+    if args.metrics:
+        with open(args.metrics, "w") as f:
+            json.dump(metrics, f, indent=2)
+        print(f"[saved] {args.metrics}")
+
+if __name__ == "__main__":
+    main()
+---------------------------------------
+source ~/llavaenv/bin/activate
+pip install -U pycocotools
+
+python /home/vipuser/eval_llava_coco_pretrain.py \
+  --model-dir /home/vipuser/llava-1.5-7b-hf \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 500 \
+  --tokens 160 \
+  --out /home/vipuser/coco/llava_dt_base_500.json \
+  --metrics /home/vipuser/coco/llava_metrics_base_500.json \
+  --raw_debug_first 0 | tee /home/vipuser/coco/eval_base_500.log
