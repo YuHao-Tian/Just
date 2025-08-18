@@ -6,7 +6,7 @@ python - <<'PY'
 import json, sys, os
 inp = "/home/vipuser/lf_data/train2017_detjson.jsonl"
 out = "/home/vipuser/lf_data/train2017_detjson_abs.jsonl"
-root = "/home/coco/images"
+root = "/home/vipuser/coco/images"
 n = 0
 with open(inp, "r") as fin, open(out, "w") as fout:
     for line in fin:
@@ -26,9 +26,9 @@ PY
 # 验证集
 python - <<'PY'
 import json, sys, os
-inp = "/home/lf_data/val2017_detjson.jsonl"
-out = "/home/lf_data/val2017_detjson_abs.jsonl"
-root = "/home/coco/images"
+inp = "/home/vipuser/lf_data/val2017_detjson.jsonl"
+out = "/home/vipuser/lf_data/val2017_detjson_abs.jsonl"
+root = "/home/vipuser/coco/images"
 n = 0
 with open(inp, "r") as fin, open(out, "w") as fout:
     for line in fin:
@@ -47,8 +47,8 @@ PY
 
 
 
-head -n 1 /home/lf_data/train2017_detjson_abs.jsonl
-head -n 1 /home/lf_data/val2017_detjson_abs.jsonl
+head -n 1 /home/vipuser/lf_data/train2017_detjson_abs.jsonl
+head -n 1 /home/vipuser/lf_data/val2017_detjson_abs.jsonl
 
 
 
