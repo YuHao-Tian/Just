@@ -1,0 +1,18 @@
+{
+  "coco_detjson_train": {
+    "file_name": "train2017_detjson.jsonl",
+    "format": "sharegpt",
+    "columns": { "messages": "conversations" },
+    "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
+    "multi_modal": true,
+    "image_field": "images"
+  },
+  "coco_detjson_val": {
+    "file_name": "val2017_detjson.jsonl",
+    "format": "sharegpt",
+    "columns": { "messages": "conversations" },
+    "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
+    "multi_modal": true,
+    "image_field": "images"
+  }
+}
