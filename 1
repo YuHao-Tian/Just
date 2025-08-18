@@ -563,3 +563,11 @@ python /home/vipuser/eval_llava_coco_pretrain.py \
   --tokens 160 \
   --out /home/vipuser/coco/llava_dt_base_500.json \
   | tee /home/vipuser/coco/eval_base_500.log
+----------------------------------------------
+
+python -u /home/vipuser/eval_llava_coco_pretrain.py \
+  --model-dir /home/vipuser/llava-1.5-7b-hf \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 0 --tokens 160 \
+  --out /home/vipuser/coco/llava_dt_base_full.json
