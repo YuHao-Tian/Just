@@ -348,4 +348,12 @@ def main():
 
 if __name__ == "__main__":
     main()
+------------------------------------------------------
+
+python /home/vipuser/eval_llava_coco_pretrain.py \
+  --model-dir /home/vipuser/llava-1.5-7b-hf \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 500 \
+  --out /home/vipuser/coco/llava_dt_base.json
 
