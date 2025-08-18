@@ -50,17 +50,19 @@ DONE (t=0.77s).
 [metrics] mAP@[.50:.95]=0.0001 | AP50=0.0002 | AR@100=0.0000
 
 ------------------------------------------
-Loading checkpoint shards: 100%|██████████████████| 3/3 [00:17<00:00,  5.83s/it]
-Using a slow image processor as `use_fast` is unset and a slow processor was saved with this model. `use_fast=True` will be the default behavior in v4.52, even if the model was saved with a slow processor. This will result in minor differences in outputs. You'll still be able to use a slow processor with `use_fast=False`.
-Traceback (most recent call last):
-  File "/home/vipuser/eval_llava_coco_pretrain.py", line 199, in <module>
-    main()
-  File "/home/vipuser/eval_llava_coco_pretrain.py", line 162, in main
-    "score": float(d.get("confidence", 0.9))
-TypeError: float() argument must be a string or a real number, not 'list'
-loading annotations into memory...
-Done (t=6.07s)
-creating index...
-index created!
-[info] subset = 500 images
+(llavaenv) vipuser@ubuntu22:~$ python /home/vipuser/eval_llava_coco_pretrain.py \
+  --model-dir /home/vipuser/llava-1.5-7b-hf \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 500 \
+  --tokens 160 \
+  --out /home/vipuser/coco/llava_dt_base_500.json \
+  --metrics /home/vipuser/coco/llava_metrics_base_500.json \
+  --raw_debug_first 0 | tee /home/vipuser/coco/eval_base_500.log
+usage: eval_llava_coco_pretrain.py [-h] [--model-dir MODEL_DIR]
+                                   [--val-ann VAL_ANN] [--val-img VAL_IMG]
+                                   [--subset SUBSET] [--tokens TOKENS]
+                                   [--out OUT]
+eval_llava_coco_pretrain.py: error: unrecognized arguments: --metrics /home/vipuser/coco/llava_metrics_base_500.json --raw_debug_first 0
+
 
