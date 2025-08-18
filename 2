@@ -50,19 +50,16 @@ DONE (t=0.77s).
 [metrics] mAP@[.50:.95]=0.0001 | AP50=0.0002 | AR@100=0.0000
 
 ------------------------------------------
-(llavaenv) vipuser@ubuntu22:~$ python /home/vipuser/eval_llava_coco_pretrain.py \
-  --model-dir /home/vipuser/llava-1.5-7b-hf \
-  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
-  --val-img  /home/vipuser/coco/images/val2017 \
-  --subset 500 \
-  --tokens 160 \
-  --out /home/vipuser/coco/llava_dt_base_500.json \
-  --metrics /home/vipuser/coco/llava_metrics_base_500.json \
-  --raw_debug_first 0 | tee /home/vipuser/coco/eval_base_500.log
-usage: eval_llava_coco_pretrain.py [-h] [--model-dir MODEL_DIR]
-                                   [--val-ann VAL_ANN] [--val-img VAL_IMG]
-                                   [--subset SUBSET] [--tokens TOKENS]
-                                   [--out OUT]
-eval_llava_coco_pretrain.py: error: unrecognized arguments: --metrics /home/vipuser/coco/llava_metrics_base_500.json --raw_debug_first 0
-
-
+Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.001
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.004
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.000
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.000
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.001
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.002
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.001
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.001
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.001
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.000
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.001
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.003
+[metrics] mAP@[.50:.95]=0.0010 | AP50=0.0036 | AR@100=0.0012
