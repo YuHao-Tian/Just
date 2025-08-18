@@ -111,3 +111,36 @@ python -u -m llamafactory.cli.train \
 ____________________
 /home/vipuser/llavaenv/bin/python: Error while finding module specification for 'llamafactory.cli.train' (ModuleNotFoundError: __path__ attribute not found on 'llamafactory.cli' while trying to find 'llamafactory.cli.train')
 
+——————————————
+source ~/llavaenv/bin/activate
+
+# 确保用的就是这个环境里的 CLI
+which llamafactory-cli
+
+# 用 CLI 跑一个 5 步 sanity check
+/home/vipuser/llavaenv/bin/llamafactory-cli train \
+  --stage sft \
+  --finetuning_type lora \
+  --model_name_or_path /home/vipuser/llava-1.5-7b-hf \
+  --dataset_dir /home/vipuser/lf_data \
+  --dataset coco_detjson_train \
+  --eval_dataset coco_detjson_val \
+  --template llava \
+  --cutoff_len 1024 \
+  --learning_rate 5e-05 \
+  --per_device_train_batch_size 2 \
+  --gradient_accumulation_steps 8 \
+  --num_train_epochs 3 \
+  --lora_rank 8 \
+  --lora_alpha 16 \
+  --lora_dropout 0.1 \
+  --lora_target all \
+  --do_train true \
+  --do_eval false \
+  --max_steps 5 \
+  --logging_steps 1 \
+  --report_to none \
+  --overwrite_output_dir true \
+  --preprocessing_num_workers 4 \
+  --dataloader_num_workers 2 \
+  -u | tee /home/vipuser/saves/quick_sanity.log
