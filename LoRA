@@ -154,3 +154,24 @@ print("img:", img, "exists:", os.path.exists(img))
 print("has conversations:", isinstance(obj.get("conversations"), list))
 PY
 
+————————————————————————————————————————————————
+source ~/llavaenv/bin/activate
+
+llamafactory-cli train \
+  --stage sft \
+  --finetuning_type lora \
+  --model_name_or_path /home/vipuser/llava-1.5-7b-hf \
+  --dataset_dir /home/vipuser/lf_data \
+  --dataset coco_detjson_train \
+  --eval_dataset coco_detjson_val \
+  --template llava \
+  --cutoff_len 1024 \
+  --learning_rate 5e-05 \
+  --num_train_epochs 3 \
+  --per_device_train_batch_size 2 \
+  --gradient_accumulation_steps 8 \
+  --lora_rank 8 \
+  --lora_alpha 16 \
+  --lora_dropout 0.1 \
+  --lora_target all \
+  --output_dir /home/vipuser/saves/lf_llava15_7b_coco_loraB
