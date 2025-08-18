@@ -580,4 +580,12 @@ python -u /home/vipuser/eval_llava_coco_pretrain.py \
   --split train2017 \
   --out /home/vipuser/lf_data/train2017_detjson.jsonl \
   --max_dets 15
+-------------------------------------------
+python /home/vipuser/coco_to_lf_jsonl.py \
+  --ann /home/vipuser/coco/annotations/instances_val2017.json \
+  --imgroot /home/vipuser/coco/images \
+  --split val2017 \
+  --out /home/vipuser/lf_data/val2017_detjson.jsonl \
+  --max_dets 15
+# 可用 head/tail/shuf 采样，或者全部当 eval
 
