@@ -43,3 +43,20 @@ print(text.split("ASSISTANT:")[-1].strip())
 
 PROMPT:
 python /home/vipuser/image_caption.py /path/to/your.jpg "用中文一句话描述这张图。"
+
+
+# 1) 安装 Miniforge（只装到你的 home，不动系统）
+cd ~
+wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+bash Miniforge3-Linux-x86_64.sh -b -p $HOME/miniforge3
+
+# 2) 让当前 shell 接管新的 conda
+eval "$($HOME/miniforge3/bin/conda shell.bash hook)"
+conda -V                  # 应该看到 23/24.x 而不是 4.0.5
+which conda               # 应该指向 ~/miniforge3/bin/conda
+
+# 3) 创建你要的环境（随便 3.10/3.11 都有）
+conda create -n py310 python=3.10 -y
+conda activate py310
+python -V                 # Python 3.10.x
+
