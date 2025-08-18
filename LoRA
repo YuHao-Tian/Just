@@ -21,16 +21,24 @@
 
 ——————————————————————————————————————————————————
 python - <<'PY'
-import json, os, re
-p="/home/vipuser/lf_data/train2017_detjson_abs.jsonl"
-with open(p) as f:
-    obj=json.loads(next(f))
-msgs=[c["value"] for c in obj["conversations"]]
-tokens=sum(len(re.findall(r"<image>", m)) for m in msgs)
-imgs=obj.get("images", [])
-print("tokens=", tokens, "imgs=", len(imgs), "ok=", tokens==len(imgs))
-print("exists=", all(os.path.exists(x) for x in imgs), "example_img=", imgs[0] if imgs else None)
+import json, re, os, sys
+bad = 0; total = 0
+for p in ["/home/vipuser/lf_data/train2017_detjson_abs.jsonl",
+          "/home/vipuser/lf_data/val2017_detjson_abs.jsonl"]:
+    with open(p) as f:
+        for line in f:
+            total += 1
+            o = json.loads(line)
+            msgs = [c["value"] for c in o.get("conversations",[])]
+            tokens = sum(len(re.findall(r"<image>", m)) for m in msgs)
+            imgs = o.get("images", [])
+            if tokens != len(imgs) or len(imgs)!=1 or not all(os.path.exists(x) for x in imgs):
+                bad += 1
+                if bad <= 5:
+                    print("[BAD]", o.get("id"), "tokens=",tokens, "imgs=",len(imgs))
+print("bad/total =", bad, "/", total)
 PY
+
 ————————————————————————————————————————————————————————————
 source ~/llavaenv/bin/activate
 
