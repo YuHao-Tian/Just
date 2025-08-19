@@ -501,12 +501,15 @@ python -u /home/vipuser/unified_llava_det.py \
   --save-raw --device-map cuda
 
 ————————————————————————————————
-# 基座
 python -u /home/vipuser/unified_llava_det.py \
   --model-dir /home/vipuser/llava-1.5-7b-hf \
   --image /home/vipuser/coco/images/val2017/000000397133.jpg \
-  --val-ann /home/vipuser/coco/annotations/instances_val2017.json \  # 👈 关键：启用 COCO80 类表
-  --tokens 512 --max-objects 20 --min-conf 0.05 --device-map cuda \
+  --val-ann /home/vipuser/coco/annotations/instances_val2017.json \
+  --tokens 512 \
+  --max-objects 20 \
+  --min-conf 0.05 \
+  --device-map cuda \
   --out-img  /home/vipuser/coco/vis_BASE_397133.jpg \
   --out-json /home/vipuser/coco/vis_BASE_397133.json \
   --save-raw
+
