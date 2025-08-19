@@ -471,11 +471,12 @@ python -u /home/vipuser/unified_llava_det.py \
   --save-raw
 
 python -u /home/vipuser/unified_llava_det.py \
-  --model-dir /home/vipuser/llava-1.5-7b-hf \
+  --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged \
+  --proc-dir  /home/vipuser/llava-1.5-7b-hf \
+  --image /home/vipuser/coco/images/val2017/000000397133.jpg \
+  --tokens 256 --max-objects 20 --device-map cuda \
+  --out-img  /home/vipuser/coco/vis_LORA_397133.jpg \
+  --out-json /home/vipuser/coco/vis_LORA_397133.json \
   --val-ann /home/vipuser/coco/annotations/instances_val2017.json \
-  --val-img  /home/vipuser/coco/images/val2017 \
-  --subset 500 \
-  --tokens 768 --min-conf 0.30 --nms-iou 0.60 --max-objects 12 \
-  --out /home/vipuser/coco/llava_dt_BASE_500.json \
-  --save-raw --device-map cuda
+  --save-raw
 
