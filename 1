@@ -443,4 +443,19 @@ python -u /home/vipuser/eval_llava_coco_chat_SOLID.py \
   --subset 500 \
   --tokens 512 --min-conf 0.00 --nms-iou 0.60 --max-objects 50 \
   --out /home/vipuser/coco/LORA_500.json --save-raw
+————————————————————————————————————————————————————————
+# 例：用基座模型，对 COCO val2017 前 50 张做“自报准确率”
+python -u /home/vipuser/selfreport_acc_llava.py \
+  --model-dir /home/vipuser/llava-1.5-7b-hf \
+  --val-img   /home/vipuser/coco/images/val2017 \
+  --subset 50 \
+  --tokens 256 \
+  --out /home/vipuser/coco/self_acc_BASE_50.json \
+  --save-raw
+python -u /home/vipuser/selfreport_acc_llava.py \
+  --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged \
+  --proc-dir  /home/vipuser/llava-1.5-7b-hf \
+  --val-img   /home/vipuser/coco/images/val2017 \
+  --subset 50 --tokens 256 \
+  --out /home/vipuser/coco/self_acc_LORA_50.json --save-raw
 
