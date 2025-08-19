@@ -444,4 +444,16 @@ Traceback (most recent call last):
   File "/home/vipuser/eval_llava_coco_pretrain.py", line 5, in <module>
     from pycocotools.coco import COCO
 ModuleNotFoundError: No module named 'pycocotools'
+——————————————————————————————
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate lf
+
+PYTORCH_SDP_KERNEL=math \
+python -u /home/vipuser/eval_llava_coco_pretrain.py \
+  --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 50 \
+  --tokens 512 \
+  --out /home/vipuser/coco/llava_dt_lora_tokens512_subset50.json
 
