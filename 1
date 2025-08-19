@@ -628,3 +628,15 @@ PYTORCH_SDP_KERNEL=math \
   --do_eval true \
   --overwrite_output_dir true \
   2>&1 | tee /home/vipuser/saves/train_full.log
+
+  ——————————————————————————————————
+# 先用基座跑 50 张做冒烟测试
+PYTORCH_SDP_KERNEL=math \
+python -u /home/vipuser/eval_llava_coco_pretrain.py \
+  --model-dir /home/vipuser/llava-1.5-7b-hf \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 50 --tokens 1024 \
+  --out /home/vipuser/coco/llava_dt_BASE_50.json \
+  --show-raw
+
