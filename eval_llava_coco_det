@@ -184,10 +184,7 @@ def generate_for_image(
     inputs = processor(images=image, text=prompt, return_tensors="pt").to(model.device)
     with torch.inference_mode():
         output_ids = model.generate(
-            **inputs,
-            do_sample=False,
-            temperature=0.0,
-            max_new_tokens=max_new_tokens,
+            **inputs,\n            do_sample=False,\n            max_new_tokens=max_new_tokens,
         )
     text = processor.batch_decode(output_ids, skip_special_tokens=True)[0]
     return text
@@ -208,8 +205,7 @@ def main():
     parser.add_argument("--nms-iou", type=float, default=0.60)
     parser.add_argument("--max-objects", type=int, default=12)
     parser.add_argument("--out", required=True, type=str)
-    parser.add_argument("--save-raw", action="store_true", help="Also save raw generations next to --out")
-    args = parser.parse_args()
+    parser.add_argument("--save-raw", action="store_true", help="Also save raw generations next to --out")\n   args = parser.parse_args()\n\n    # Optional: suppress noisy generation warnings from Transformers\n    if args.quiet:\n        try:\n            from transformers.utils import logging as hf_logging\n            hf_logging.set_verbosity_error()\n            import os as _os\n            _os.environ["TRANSFORMERS_VERBOSITY"] = "error"\n        excepstore_true", help="Suppress Transformers generation warnings")\n    args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
