@@ -366,3 +366,16 @@ python -u /home/vipuser/eval_llava_coco_det.py \
 _________
 # 方案A：用 sed 一把替换两种写法
 sed -i 's/args\.show-raw/args.show_raw/g; s/args\.show\b/args.show_raw/g' /home/vipuser/eval_llava_coco_det.py
+——————————————————————
+python -u /home/vipuser/eval_llava_coco_det.py \
+  --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 50 \
+  --tokens 768 \
+  --min-conf 0.30 \
+  --nms-iou 0.60 \
+  --max-objects 8 \
+  --out /home/vipuser/coco/llava_dt_LORA_50.json \
+  --show-raw
+
