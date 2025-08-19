@@ -8,7 +8,7 @@ Robust COCO eval for LLaVA-style VLMs (BASE vs LoRA)
 - Deterministic decoding (do_sample=False)
 
 Usage (examples):
-  python -u eval_llava_coco_det_clean.py \
+  python -u eval_llava_coco_det.py \
     --model-dir /home/vipuser/llava-1.5-7b-hf \
     --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
     --val-img  /home/vipuser/coco/images/val2017 \
@@ -16,7 +16,7 @@ Usage (examples):
     --tokens 1024 --min-conf 0.30 --nms-iou 0.60 --max-objects 12 \
     --out /home/vipuser/coco/llava_dt_BASE_500.json
 
-  python -u eval_llava_coco_det_clean.py \
+  python -u eval_llava_coco_det.py \
     --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_merged \
     --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
     --val-img  /home/vipuser/coco/images/val2017 \
@@ -75,7 +75,9 @@ def nms_xywh(dets: List[Dict[str, Any]], iou_thr: float) -> List[Dict[str, Any]]
 def strip_code_fences(text: str) -> str:
     t = text.strip()
     if t.startswith("```"):
+        # remove leading fence
         t = re.sub(r"^```[a-zA-Z0-9]*\n?", "", t).strip()
+        # remove trailing fence
         if t.endswith("```"):
             t = t[:-3].strip()
     return t
@@ -105,10 +107,12 @@ def recover_json_object(text: str) -> Dict[str, Any]:
         obj = try_loads(core)
         if obj is not None:
             return obj
+        # suffix patches
         for suff in ["}]}", "}}", "]}", "}"]:
             obj = try_loads(core + suff)
             if obj is not None:
                 return obj
+    # last-chance: find the first {...} block via regex (non-greedy)
     m = re.search(r"\{.*\}", t, flags=re.DOTALL)
     if m:
         obj = try_loads(m.group(0))
@@ -141,6 +145,7 @@ def canon_label(name: str, valid: set) -> Optional[str]:
     n = n.replace("_", " ")
     if n in COMMON_ALIASES:
         n = COMMON_ALIASES[n]
+    # try singular heuristics for a few easy cases
     if n.endswith("s") and n[:-1] in valid:
         n = n[:-1]
     return n if n in valid else None
@@ -176,7 +181,12 @@ def generate_for_image(
     prompt: str,
     max_new_tokens: int,
 ) -> str:
-    inputs = processor(images=image, text=prompt, return_tensors="pt").to(model.device)
+    """Use LLaVA chat template so special tokens are correct."""
+    messages = [
+        {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]}
+    ]
+    chat = processor.apply_chat_template(messages, add_generation_prompt=True)
+    inputs = processor(images=image, text=chat, return_tensors="pt").to(model.device)
     with torch.inference_mode():
         output_ids = model.generate(
             **inputs,
@@ -211,7 +221,8 @@ def main():
         try:
             from transformers.utils import logging as hf_logging
             hf_logging.set_verbosity_error()
-            os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+            import os as _os
+            _os.environ["TRANSFORMERS_VERBOSITY"] = "error"
         except Exception:
             pass
 
@@ -226,17 +237,6 @@ def main():
     )
     processor = AutoProcessor.from_pretrained(args.model_dir)
 
-    # Enforce clean, greedy decoding config (avoid sampler warnings)
-    try:
-        gc = model.generation_config
-        gc.do_sample = False
-        gc.num_beams = 1
-        for k in ("temperature", "top_p", "top_k", "typical_p"):
-            if hasattr(gc, k):
-                setattr(gc, k, None)
-    except Exception:
-        pass
-
     # Load COCO
     print(f"[COCO] Anns: {args.val_ann}\n[COCO] Images dir: {args.val_img}")
     coco = COCO(args.val_ann)
@@ -247,19 +247,19 @@ def main():
     cats = coco.loadCats(coco.getCatIds())
     id2name = {c["id"]: c["name"].strip().lower() for c in cats}
     name2id = {v: k for k, v in id2name.items()}
-    class_names = [id2name[i] for i in sorted(id2name.keys())]
+    class_names = [id2name[i] for i in sorted(id2name.keys())]  # 80 names
     valid_names = set(class_names)
 
+    # Prompt
     prompt = build_prompt(class_names, args.max_objects)
     retry_msg = "Only output a single valid JSON object with the key 'detections'. No extra words."
 
-    dt: List[Dict[str, Any]] = []
+    # Prepare output containers
+    dt: List[Dict[str, Any]] = []  # detections for COCOeval
     raw_texts: List[Tuple[int, str]] = []
 
-    print(
-        f"[Eval] Images: {len(img_ids)} | tokens={args.tokens} "
-        f"min_conf={args.min_conf} nms_iou={args.nms_iou} max_objects={args.max_objects}"
-    )
+    # Iterate images
+    print(f"[Eval] Images: {len(img_ids)} | tokens={args.tokens} min_conf={args.min_conf} nms_iou={args.nms_iou} max_objects={args.max_objects}")
 
     for i, img_id in enumerate(img_ids, 1):
         info = coco.loadImgs([img_id])[0]
@@ -272,27 +272,29 @@ def main():
             print(f"[Warn] Failed to open image {img_path}: {e}")
             continue
 
-        # first attempt
+        # 1) first attempt
         text = generate_for_image(model, processor, image, prompt, max_new_tokens=args.tokens)
         obj = recover_json_object(text)
 
+        # Validate basic structure; if bad, try a stricter retry prompt
         if not isinstance(obj, dict) or "detections" not in obj:
+            # second attempt: prepend stricter instruction
             second_prompt = "<image>\n" + retry_msg
             text2 = generate_for_image(model, processor, image, second_prompt, max_new_tokens=args.tokens)
-            obj2 = recover_json_object(text2)
-            # choose the one yielding more structured data
-            text = text2 if len(json.dumps(obj2)) > len(json.dumps(obj)) else text
-            obj = obj2 if text is text2 else obj
+            obj = recover_json_object(text2)
+            # keep the more promising raw
+            text = text2 if len(json.dumps(obj)) > len(json.dumps(recover_json_object(text))) else text
 
         if args.save_raw:
             raw_texts.append((img_id, text))
 
+        # Parse detections
         dets = obj.get("detections", [])
         if not isinstance(dets, list):
             dets = []
 
         raw: List[Dict[str, Any]] = []
-        for d in dets[: (args.max_objects * 2)]:
+        for d in dets[: (args.max_objects * 2)]:  # allow a bit more then prune via NMS
             if not isinstance(d, dict) or "box" not in d:
                 continue
             lab_raw = str(d.get("label", ""))
@@ -304,19 +306,31 @@ def main():
                 x1 = float(x1); y1 = float(y1); x2 = float(x2); y2 = float(y2)
             except Exception:
                 continue
+            # clip & order
             x1 = max(0.0, min(1.0, x1))
             y1 = max(0.0, min(1.0, y1))
             x2 = max(0.0, min(1.0, x2))
             y2 = max(0.0, min(1.0, y2))
             if x2 <= x1 or y2 <= y1:
                 continue
+            # normalize->abs xywh
             x = x1 * W
             y = y1 * H
             w = (x2 - x1) * W
             h = (y2 - y1) * H
             if w <= 1 or h <= 1:
                 continue
-            score = float(d.get("confidence", 0.0))
+            # prefer explicit "confidence"; fall back to "score"; default 0.5
+            score = d.get("confidence", d.get("score", 0.5))
+            try:
+                score = float(score)
+            except Exception:
+                score = 0.5
+            # clamp to [0,1]
+            if score < 0.0:
+                score = 0.0
+            if score > 1.0:
+                score = 1.0
             raw.append({
                 "image_id": int(img_id),
                 "category_id": int(name2id[lab]),
@@ -324,8 +338,10 @@ def main():
                 "score": float(score),
             })
 
+        # 1) confidence filter
         kept = [r for r in raw if r["score"] >= args.min_conf]
 
+        # 2) per-class NMS
         by_cls: Dict[int, List[Dict[str, Any]]] = {}
         for r in kept:
             by_cls.setdefault(int(r["category_id"]), []).append(r)
@@ -333,13 +349,18 @@ def main():
         for cid, items in by_cls.items():
             kept2.extend(nms_xywh(items, args.nms_iou))
 
+        # 3) global NMS (optional but helpful to reduce cross-class near-duplicates)
         kept3 = nms_xywh(kept2, args.nms_iou)
+
+        # 4) cap number of objects
         kept3 = sorted(kept3, key=lambda d: d["score"], reverse=True)[: args.max_objects]
+
         dt.extend(kept3)
 
         if i % 50 == 0:
             print(f"  processed {i}/{len(img_ids)} images, current dt={len(dt)}")
 
+    # Save detections
     out_path = args.out
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
@@ -353,6 +374,7 @@ def main():
                 f.write(f"# image_id={img_id}\n{t}\n\n")
         print(f"[Save] Raw generations -> {raw_path}")
 
+    # COCOeval
     print("[COCOeval] Running evaluation…")
     cocoDt = coco.loadRes(out_path) if len(dt) > 0 else None
     if cocoDt is None:
@@ -364,6 +386,8 @@ def main():
     coco_eval.accumulate()
     coco_eval.summarize()
 
+    # Pretty print key metrics
+    # coco_eval.stats: [AP, AP50, AP75, APs, APm, APl, AR1, AR10, AR100, ARs, ARm, ARl]
     AP = coco_eval.stats[0]
     AP50 = coco_eval.stats[1]
     AR100 = coco_eval.stats[8]
