@@ -432,3 +432,16 @@ ValueError: A placeholder is required in the string formatter.
   --adapter_name_or_path /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs \
   --export_dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged \
   --template llava
+_______________________
+(lf) vipuser@ubuntu22:~$ PYTORCH_SDP_KERNEL=math \
+python -u /home/vipuser/eval_llava_coco_pretrain.py \
+  --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 500 --tokens 160 \
+  --out /home/vipuser/coco/llava_dt_lora_500imgs_subset.json
+Traceback (most recent call last):
+  File "/home/vipuser/eval_llava_coco_pretrain.py", line 5, in <module>
+    from pycocotools.coco import COCO
+ModuleNotFoundError: No module named 'pycocotools'
+
