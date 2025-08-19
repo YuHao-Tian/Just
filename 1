@@ -389,3 +389,21 @@ python -u /home/vipuser/eval_llava_coco_det.py \
   --max-objects 20 --min-conf 0.10 --nms-iou 0.5 \
   --out /home/vipuser/coco/llava_dt_BASE_50.json \
   --show-raw
+——————————————————————————————————————————
+# 原始模型（基线）
+python -u /home/vipuser/eval_llava_coco_det.py \
+  --model-dir /home/vipuser/llava-1.5-7b-hf \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 500 \
+  --tokens 1024 --min-conf 0.30 --nms-iou 0.60 --max-objects 12 \
+  --out /home/vipuser/coco/llava_dt_BASE_500.json --save-raw
+
+# LoRA 合并后模型
+python -u /home/vipuser/eval_llava_coco_det.py \
+  --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_merged \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 500 \
+  --tokens 1024 --min-conf 0.30 --nms-iou 0.60 --max-objects 12 \
+  --out /home/vipuser/coco/llava_dt_LORA_500.json --save-raw
