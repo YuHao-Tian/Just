@@ -143,4 +143,49 @@ _________________________________________
   train_runtime            = 0:00:52.58
   train_samples_per_second =      1.521
   train_steps_per_second   =      0.095
+_____________________________________
+labels:
+{"detections": [{"label": "bowl", "box": [0.24562499999999998, 0.26733021077283375, 0.27353125, 0.30437939110070256], "confidence": 1.0}, {"label": "broccoli", "box": [0.135015625, 0.6884543325526933, 0.172453125, 0.7146370023419204], "confidence": 1.0}, {"label": "bottle", "box": [0.34003125, 0.5633255269320843, 0.400953125, 0.6985714285714285], "confidence": 1.0}, {"label": "bowl", "box": [0.048875, 0.8056206088992974, 0.15531250000000002, 0.9012412177985948], "confidence": 1.0}, {"label": "dining table", "box": [0.0015625, 0.5626229508196722, 0.543171875, 1.0], "confidence": 1.0}, {"label": "cup", "box": [0.18656250000000002, 0.6381967213114754, 0.22534375, 0.718407494145199], "confidence": 1.0}, {"label": "person", "box": [0.60728125, 0.1637470725995316, 0.778234375, 0.8139110070257611], "confidence": 1.0}, {"label": "broccoli", "box": [0.154296875, 0.7137704918032787, 0.171140625, 0.726814988290398], "confidence": 1.0}, {"label": "oven", "box": [0.002125, 0.38484777517564406, 0.30300000000000005, 0.6152224824355973], "confidence": 1.0}, {"label": "knife", "box": [0.21182812499999998, 0.5841451990632318, 0.24670312499999997, 0.651569086651054], "confidence": 1.0}, {"label": "sink", "box": [0.776953125, 0.4763466042154567, 0.96759375, 0.5433489461358314], "confidence": 1.0}, {"label": "bowl", "box": [0.093171875, 0.6729742388758783, 0.21203124999999998, 0.7696955503512881], "confidence": 1.0}, {"label": "bowl", "box": [0.243703125, 0.39566744730679154, 0.284375, 0.4357845433255269], "confidence": 1.0}, {"label": "oven", "box": [0.0, 0.49391100702576113, 0.29900000000000004, 0.7257142857142858], "confidence": 1.0}, {"label": "person", "box": [0.0, 0.615480093676815, 0.09712499999999999, 0.7015925058548009], "confidence": 1.0}]}</s>
+[INFO|2025-08-19 10:10:52] llamafactory.model.model_utils.kv_cache:143 >> KV cache is disabled during training.
 
+[INFO|modeling_utils.py:1305] 2025-08-19 10:10:52,166 >> loading weights file /home/vipuser/llava-1.5-7b-hf/model.safetensors.index.json
+[INFO|modeling_utils.py:2411] 2025-08-19 10:10:52,167 >> Instantiating LlavaForConditionalGeneration model under default dtype torch.float16.
+[INFO|configuration_utils.py:1098] 2025-08-19 10:10:52,171 >> Generate config GenerationConfig {
+  "pad_token_id": 32001,
+  "use_cache": false
+}
+
+[INFO|modeling_utils.py:2411] 2025-08-19 10:10:52,182 >> Instantiating CLIPVisionModel model under default dtype torch.float16.
+[INFO|modeling_utils.py:2411] 2025-08-19 10:10:52,206 >> Instantiating LlamaModel model under default dtype torch.float16.
+Loading checkpoint shards: 100%|██████████| 3/3 [00:36<00:00, 12.27s/it]
+[INFO|modeling_utils.py:5606] 2025-08-19 10:11:29,096 >> All model checkpoint weights were used when initializing LlavaForConditionalGeneration.
+
+[INFO|modeling_utils.py:5614] 2025-08-19 10:11:29,096 >> All the weights of LlavaForConditionalGeneration were initialized from the model checkpoint at /home/vipuser/llava-1.5-7b-hf.
+If your task is similar to the task the model of the checkpoint was trained on, you can already use LlavaForConditionalGeneration for predictions without further training.
+[INFO|configuration_utils.py:1051] 2025-08-19 10:11:29,101 >> loading configuration file /home/vipuser/llava-1.5-7b-hf/generation_config.json
+[INFO|configuration_utils.py:1098] 2025-08-19 10:11:29,102 >> Generate config GenerationConfig {
+  "bos_token_id": 1,
+  "eos_token_id": 2,
+  "pad_token_id": 32001
+}
+
+
+[INFO|2025-08-19 10:11:29] llamafactory.model.model_utils.checkpointing:143 >> Gradient checkpointing enabled.
+[INFO|2025-08-19 10:11:29] llamafactory.model.model_utils.attention:143 >> Using torch SDPA for faster training and inference.
+[INFO|2025-08-19 10:11:29] llamafactory.model.adapter:143 >> Upcasting trainable params to float32.
+[INFO|2025-08-19 10:11:29] llamafactory.model.adapter:143 >> Fine-tuning method: LoRA
+[INFO|2025-08-19 10:11:29] llamafactory.model.model_utils.misc:143 >> Found linear modules: up_proj,down_proj,k_proj,o_proj,q_proj,gate_proj,v_proj
+[INFO|2025-08-19 10:11:29] llamafactory.model.model_utils.visual:143 >> Set vision model not trainable: ['vision_tower'].
+[INFO|2025-08-19 10:11:29] llamafactory.model.model_utils.visual:143 >> Set multi model projector not trainable: multi_modal_projector.
+[INFO|2025-08-19 10:11:29] llamafactory.model.loader:143 >> trainable params: 19,988,480 || all params: 7,083,415,552 || trainable%: 0.2822
+[WARNING|2025-08-19 10:11:29] llamafactory.train.callbacks:154 >> Previous trainer log in this folder will be deleted.
+[INFO|trainer.py:2433] 2025-08-19 10:11:30,078 >> ***** Running training *****
+[INFO|trainer.py:2434] 2025-08-19 10:11:30,078 >>   Num examples = 118,287
+[INFO|trainer.py:2435] 2025-08-19 10:11:30,078 >>   Num Epochs = 3
+[INFO|trainer.py:2436] 2025-08-19 10:11:30,078 >>   Instantaneous batch size per device = 2
+[INFO|trainer.py:2439] 2025-08-19 10:11:30,078 >>   Total train batch size (w. parallel, distributed & accumulation) = 16
+[INFO|trainer.py:2440] 2025-08-19 10:11:30,078 >>   Gradient Accumulation steps = 8
+[INFO|trainer.py:2441] 2025-08-19 10:11:30,078 >>   Total optimization steps = 22,179
+[INFO|trainer.py:2442] 2025-08-19 10:11:30,082 >>   Number of trainable parameters = 19,988,480
+  0%|          | 0/22179 [00:00<?, ?it/s][WARNING|logging.py:328] 2025-08-19 10:11:31,452 >> `loss_type=None` was set in the config but it is unrecognised.Using the default loss: `ForCausalLMLoss`.
+  0%|          | 20/22179 [04:08<75:41:47, 12.30s/it]       
