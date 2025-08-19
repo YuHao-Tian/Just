@@ -118,4 +118,29 @@ cuda_available: True
 device0: NVIDIA A100-SXM4-40GB
 cudnn: 91002
 matmul_ok: True
+_________________________________________
+[INFO|trainer.py:2433] 2025-08-19 10:04:29,322 >> ***** Running training *****
+[INFO|trainer.py:2434] 2025-08-19 10:04:29,322 >>   Num examples = 10
+[INFO|trainer.py:2435] 2025-08-19 10:04:29,323 >>   Num Epochs = 5
+[INFO|trainer.py:2436] 2025-08-19 10:04:29,323 >>   Instantaneous batch size per device = 2
+[INFO|trainer.py:2439] 2025-08-19 10:04:29,323 >>   Total train batch size (w. parallel, distributed & accumulation) = 16
+[INFO|trainer.py:2440] 2025-08-19 10:04:29,323 >>   Gradient Accumulation steps = 8
+[INFO|trainer.py:2441] 2025-08-19 10:04:29,323 >>   Total optimization steps = 5
+[INFO|trainer.py:2442] 2025-08-19 10:04:29,332 >>   Number of trainable parameters = 19,988,480
+  0%|          | 0/5 [00:00<?, ?it/s][WARNING|logging.py:328] 2025-08-19 10:04:31,804 >> `loss_type=None` was set in the config but it is unrecognised.Using the default loss: `ForCausalLMLoss`.
+ 40%|████      | 2/5 [00:21<00:31, 10.36s/it]
+
+[INFO|tokenization_utils_base.py:2393] 2025-08-19 10:05:22,391 >> chat template saved in trainer_output/chat_template.jinja
+[INFO|tokenization_utils_base.py:2562] 2025-08-19 10:05:22,392 >> tokenizer config file saved in trainer_output/tokenizer_config.json
+[INFO|tokenization_utils_base.py:2571] 2025-08-19 10:05:22,392 >> Special tokens file saved in trainer_output/special_tokens_map.json
+[INFO|modelcard.py:456] 2025-08-19 10:05:22,421 >> Dropping the following result as it does not have all the necessary fields:
+{'task': {'name': 'Causal Language Modeling', 'type': 'text-generation'}}
+{'train_runtime': 52.5897, 'train_samples_per_second': 1.521, 'train_steps_per_second': 0.095, 'train_loss': 1.0642495155334473, 'epoch': 5.0}
+***** train metrics *****
+  epoch                    =        5.0
+  total_flos               =  3643301GF
+  train_loss               =     1.0642
+  train_runtime            = 0:00:52.58
+  train_samples_per_second =      1.521
+  train_steps_per_second   =      0.095
 
