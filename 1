@@ -469,3 +469,14 @@ python -u /home/vipuser/selfreport_acc_llava.py \
   --out-img /home/vipuser/coco/vis_BASE_397133.jpg \
   --out-json /home/vipuser/coco/vis_BASE_397133.json \
   --save-raw
+source ~/miniforge3/envs/lf/bin/activate
+
+python -u /home/vipuser/one_image_llava_vis.py \
+  --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged \
+  --proc-dir  /home/vipuser/llava-1.5-7b-hf \
+  --image /home/vipuser/coco/images/val2017/000000397133.jpg \
+  --tokens 256 --max-objects 20 \
+  --self-report --device-map cuda \
+  --out-img  /home/vipuser/coco/vis_LORA_397133.jpg \
+  --out-json /home/vipuser/coco/vis_LORA_397133.json \
+  --save-raw
