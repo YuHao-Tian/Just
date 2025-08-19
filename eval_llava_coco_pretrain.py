@@ -1,213 +1,270 @@
-import os, json, argparse, time, sys
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import os, json, argparse, time, math, random
+from collections import defaultdict
+from typing import List, Dict, Any
+
 import torch
 from PIL import Image
-from transformers import AutoProcessor, LlavaForConditionalGeneration
+
+from transformers import AutoProcessor, LlavaForConditionalGeneration, StoppingCriteria, StoppingCriteriaList
+
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
-def try_parse_json(text: str):
-    """Extract outermost JSON object if possible; else return empty schema."""
+
+# -----------------------------
+# Utilities
+# -----------------------------
+
+def set_torch_flags():
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+
+def load_image(path: str) -> Image.Image:
+    img = Image.open(path).convert("RGB")
+    return img
+
+def clamp01(x: float) -> float:
+    return max(0.0, min(1.0, float(x)))
+
+def try_float(v):
     try:
-        s, e = text.find("{"), text.rfind("}")
-        if s != -1 and e != -1 and e > s:
-            return json.loads(text[s:e+1])
+        if isinstance(v, list) and len(v) == 1:
+            v = v[0]
+        return float(v)
+    except Exception:
+        return None
+
+def json_substring(s: str) -> str:
+    """return the substring between last matching {...} if exists"""
+    r = s.rfind("}")
+    if r == -1:
+        return s
+    l = s.rfind("{", 0, r + 1)
+    if l == -1:
+        return s
+    return s[l : r + 1]
+
+def try_parse_json(s: str) -> Dict[str, Any]:
+    s2 = json_substring(s.strip())
+    try:
+        obj = json.loads(s2)
+        if isinstance(obj, dict) and "detections" in obj and isinstance(obj["detections"], list):
+            return obj
     except Exception:
         pass
     return {"detections": []}
 
-def build_canon_label(name2id):
-    """Return a canonicalizer mapping raw labels to official COCO-80 names (lower-case)."""
-    name_set = set(name2id.keys())
-    no_space_map = {n.replace(" ", ""): n for n in name_set}
-    syn = {
-        "people":"person","man":"person","woman":"person","men":"person","women":"person",
-        "boy":"person","girl":"person","kid":"person","child":"person","baby":"person",
-        "motorbike":"motorcycle","aeroplane":"airplane","aircraft":"airplane",
-        "trafficlight":"traffic light","traffic-light":"traffic light",
-        "tvmonitor":"tv","tv monitor":"tv","television":"tv",
-        "cellphone":"cell phone","mobile phone":"cell phone","smartphone":"cell phone","iphone":"cell phone",
-        "sofa":"couch","pottedplant":"potted plant","potted plant":"potted plant",
-        "diningtable":"dining table","hand bag":"handbag","hand-bag":"handbag",
-        "wineglass":"wine glass","wine-glass":"wine glass",
-        "tennis-racket":"tennis racket","baseball-bat":"baseball bat","baseball-glove":"baseball glove"
-    }
-    def canon(raw: str):
-        s = (raw or "").lower().strip()
-        s = s.replace("_"," ").replace("-"," ")
-        while "  " in s: s = s.replace("  ", " ")
-        if s in name_set: return s
-        if s in syn: return syn[s]
-        key = s.replace(" ","")
-        if key in no_space_map: return no_space_map[key]
-        return None
-    return canon
-
-def gen_and_decode_reply(model, proc, img, prompt, device, max_new_tokens=192):
-    """Generate once and decode ONLY the assistant's newly generated text."""
-    inputs = proc(images=img, text=prompt, return_tensors="pt")
-    inputs = {k:(v.to(device) if hasattr(v,"to") else v) for k,v in inputs.items()}
-    with torch.inference_mode():
-        out = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-            return_dict_in_generate=True
-        )
-    seq = out.sequences[0]
-    # 只解码新生成的部分
-    gen_ids = seq[inputs["input_ids"].shape[-1]:]
-    return proc.decode(gen_ids, skip_special_tokens=True).strip()
-
-def labels_invalid(dets, allowed_lower: set):
-    """Return True if any label is clearly invalid (placeholder or not in allowed set)."""
+def group_topk(dets: List[Dict[str, Any]], k_total=6, k_per_class=2) -> List[Dict[str, Any]]:
+    by_cls = defaultdict(list)
     for d in dets:
-        lab = str(d.get("label","")).lower()
-        if ("<" in lab) or (lab not in allowed_lower):
-            return True
-    return False
+        lbl = str(d.get("label", "")).strip()
+        sc  = d.get("confidence", 0.0)
+        if not isinstance(sc, (int, float)):
+            continue
+        by_cls[lbl].append((float(sc), d))
+    kept = []
+    for lbl, arr in by_cls.items():
+        arr.sort(key=lambda x: x[0], reverse=True)
+        kept.extend([d for _, d in arr[:k_per_class]])
+    kept.sort(key=lambda d: float(d.get("confidence", 0.0)), reverse=True)
+    return kept[:k_total]
+
+class StopOnBrace(StoppingCriteria):
+    """Stop as soon as the model outputs a '}' (optionally followed by newline)."""
+    def __init__(self, tokenizer):
+        self.ids = tokenizer.encode("}", add_special_tokens=False)
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
+        ids = input_ids[0].tolist()
+        L = len(self.ids)
+        return L > 0 and ids[-L:] == self.ids
+
+
+# -----------------------------
+# Main eval
+# -----------------------------
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model-dir", default="/home/vipuser/llava-1.5-7b-hf")
-    ap.add_argument("--val-ann",  default="/home/vipuser/coco/annotations/instances_val2017.json")
-    ap.add_argument("--val-img",  default="/home/vipuser/coco/images/val2017")
-    ap.add_argument("--subset",   type=int, default=10, help="evaluate first N images (0 = all 5000)")
-    ap.add_argument("--tokens",   type=int, default=192)
-    ap.add_argument("--out",      default="/home/vipuser/coco/llava_dt_base.json")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model-dir", type=str, required=True)
+    parser.add_argument("--val-ann",   type=str, required=True)
+    parser.add_argument("--val-img",   type=str, required=True)
+    parser.add_argument("--subset",    type=int, default=500)
+    parser.add_argument("--tokens",    type=int, default=512)
+    parser.add_argument("--out",       type=str, required=True)
+    parser.add_argument("--stop_on_brace", action="store_true", help="stop when '}' is produced")
+    args = parser.parse_args()
+
+    set_torch_flags()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype  = torch.bfloat16 if device == "cuda" else torch.float32
+    dtype  = torch.bfloat16 if (device == "cuda" and torch.cuda.get_device_capability()[0] >= 8) else torch.float16
 
-    # 1) Load base LLaVA-1.5-7B (no LoRA here)
-    model = LlavaForConditionalGeneration.from_pretrained(args.model_dir, torch_dtype=dtype).to(device).eval()
+    print(f"[info] device={device}, dtype={dtype}")
+
+    print("[info] loading model & processor ...")
+    model = LlavaForConditionalGeneration.from_pretrained(args.model_dir, torch_dtype=dtype).to(device)
     proc  = AutoProcessor.from_pretrained(args.model_dir)
 
-    # 2) COCO classes & images
-    coco = COCO(args.val_ann)
-    cats = coco.loadCats(coco.getCatIds())
-    class_names = [c["name"] for c in cats]              # official 80 names
-    name2id = {c["name"].lower(): c["id"] for c in cats}
-    canon_label = build_canon_label(name2id)
-    allowed = set([n.lower() for n in class_names])
-
-    imgs = coco.dataset["images"]
-    ids  = [im["id"] for im in imgs]
-    info = {im["id"]: (im["file_name"], im["width"], im["height"]) for im in imgs}
-    if args.subset and args.subset > 0:
-        ids = ids[:args.subset]
-        print(f"[info] subset = {len(ids)} images")
-
-    # 3) English instruction (NO placeholders, NO inline JSON example)
+    # Compose instruction (short & strict)
+    class_names = [
+        "person","bicycle","car","motorcycle","airplane","bus","train","truck","boat",
+        "traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat",
+        "dog","horse","sheep","cow","elephant","bear","zebra","giraffe","backpack",
+        "umbrella","handbag","tie","suitcase","frisbee","skis","snowboard","sports ball",
+        "kite","baseball bat","baseball glove","skateboard","surfboard","tennis racket",
+        "bottle","wine glass","cup","fork","knife","spoon","bowl","banana","apple",
+        "sandwich","orange","broccoli","carrot","hot dog","pizza","donut","cake","chair",
+        "couch","potted plant","bed","dining table","toilet","tv","laptop","mouse","remote",
+        "keyboard","cell phone","microwave","oven","toaster","sink","refrigerator","book",
+        "clock","vase","scissors","teddy bear","hair drier","toothbrush"
+    ]
     instr = (
         "You are an object detection assistant. "
         "Return ONLY a valid JSON object with key 'detections'. "
-        "Each item is: {\"label\": <one of the COCO-80 list>, \"box\": [x1,y1,x2,y2], \"confidence\": number in [0,1]}. "
+        "Each item: {\"label\": <one of the COCO-80 list>, \"box\": [x1,y1,x2,y2], \"confidence\": <0..1>}. "
         "Coordinates are normalized to [0,1] with (x1,y1)=top-left and (x2,y2)=bottom-right. "
-        "If nothing is found, return {\"detections\":[]}. "
+        "If nothing is found, return {\"detections\": []}. "
         "Use ONLY these labels (singular, English): " + ", ".join(class_names) + ". "
-        "At most 8 objects.Round coordinates to 3 decimals. Output JSON only."
+        "Return at most 6 objects TOTAL. If many boxes of the same class, keep only the top 2 by confidence. "
+        "Round numbers to 2 decimals. Output JSON only. End immediately after the closing '}'."
     )
 
-    dt = []
+    # COCO data
+    coco = COCO(args.val_ann)
+    img_ids = coco.getImgIds()
+    if args.subset > 0:
+        random.seed(0)
+        img_ids = img_ids[:args.subset]
+    print(f"[info] subset = {len(img_ids)} images")
+
+    # name -> cat_id map using COCO categories
+    name_to_cid = {}
+    for cat in coco.loadCats(coco.getCatIds()):
+        name_to_cid[cat["name"]] = cat["id"]
+
+    # prepare stopping criteria (optional)
+    stops = StoppingCriteriaList([StopOnBrace(proc.tokenizer)]) if args.stop_on_brace else None
+
+    results = []
     ok_json = 0
     t0 = time.time()
 
-    for k, img_id in enumerate(ids, 1):
-        fn, W, H = info[img_id]
-        img_path = os.path.join(args.val_img, fn)
-        img = Image.open(img_path).convert("RGB")
+    model.eval()
+    for i, im_id in enumerate(img_ids, 1):
+        info = coco.loadImgs([im_id])[0]
+        img_path = os.path.join(args.val_img, info["file_name"])
+        img = load_image(img_path)
+        W, H = img.size
 
-        # Build chat messages: one image + one text instruction
-        messages = [{"role":"user","content":[
-            {"type":"image"},
-            {"type":"text","text": instr}
-        ]}]
+        # messages with single image + instruction
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": instr}
+                ]
+            }
+        ]
+
+        # build chat prompt
         prompt = proc.apply_chat_template(messages, add_generation_prompt=True)
+        inputs = proc(text=prompt, images=img, return_tensors="pt").to(device)
 
-        # First try
-        txt  = gen_and_decode_reply(model, proc, img, prompt, device, max_new_tokens=args.tokens)
-        if k <= 5:
-            print(f"==== RAW REPLY (image {k}: {fn}) ====")
-            print(txt)
+        with torch.inference_mode():
+            gen_kwargs = dict(
+                max_new_tokens=args.tokens,
+                do_sample=False, temperature=0.0, top_p=1.0,
+                repetition_penalty=1.15,
+                no_repeat_ngram_size=16,
+                eos_token_id=proc.tokenizer.eos_token_id,
+                return_dict_in_generate=True
+            )
+            if stops is not None:
+                gen_kwargs["stopping_criteria"] = stops
 
+            out = model.generate(**inputs, **gen_kwargs)
+
+        # only decode new tokens
+        seq = out.sequences[0]
+        new_tokens = seq[inputs["input_ids"].shape[1]:]
+        txt = proc.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+
+        # parse with repair
+        src_txt = txt
         data = try_parse_json(txt)
 
-        # Retry if JSON invalid
-        if not isinstance(data.get("detections", None), list):
-            retry = [{"role":"user","content":[
-                {"type":"image"},
-                {"type":"text","text":"Only output valid JSON with the key 'detections'. No extra words."}
-            ]}]
-            rprompt = proc.apply_chat_template(retry, add_generation_prompt=True)
-            txt2 = gen_and_decode_reply(model, proc, img, rprompt, device, max_new_tokens=128)
-            if k <= 5:
-                print(f"==== RETRY JSON (image {k}) ====")
-                print(txt2)
-            data = try_parse_json(txt2)
-
+        # post-filter: keep top-2 per class, top-6 overall
         dets = data.get("detections", [])
-        # Retry if labels look invalid (e.g., placeholders or not in COCO-80)
-        if isinstance(dets, list) and labels_invalid(dets, allowed):
-            retry2 = [{"role":"user","content":[
-                {"type":"image"},
-                {"type":"text","text":
-                 "Rewrite as JSON using ONLY these labels: " + ", ".join(class_names) +
-                 ". Do NOT use placeholders. Output JSON only."}
-            ]}]
-            rprompt2 = proc.apply_chat_template(retry2, add_generation_prompt=True)
-            txt_fix = gen_and_decode_reply(model, proc, img, rprompt2, device, max_new_tokens=128)
-            if k <= 5:
-                print(f"==== RETRY LABELS (image {k}) ====")
-                print(txt_fix)
-            data = try_parse_json(txt_fix)
-            dets = data.get("detections", [])
+        dets = group_topk(dets, k_total=6, k_per_class=2)
 
-        # Count JSON-parsable replies
-        if isinstance(dets, list):
+        # count json success (only when braces existed AND list parsed)
+        if ("{" in src_txt and "}" in src_txt) and isinstance(dets, list):
             ok_json += 1
 
-        # Convert normalized boxes to COCO bbox and append detections
-        for d in dets[:15]:
-            if not isinstance(d, dict) or "box" not in d:
+        # convert to COCO dt entries
+        dt_this = 0
+        for d in dets:
+            lbl = str(d.get("label", "")).strip()
+            cid_list = coco.getCatIds(catNms=[lbl]) if lbl else []
+            if not cid_list:
                 continue
-            lab = canon_label(d.get("label", ""))
-            if lab is None:
+            cid = cid_list[0]
+            box = d.get("box", None)
+            conf = try_float(d.get("confidence", 0.0))
+            if box is None or conf is None:
                 continue
-            try:
-                x1, y1, x2, y2 = d["box"]
-            except Exception:
+            if not (isinstance(box, (list, tuple)) and len(box) == 4):
                 continue
-            x, y, w, h = x1 * W, y1 * H, (x2 - x1) * W, (y2 - y1) * H
-            dt.append({
-                "image_id": int(img_id),
-                "category_id": name2id[lab],
-                "bbox": [float(x), float(y), float(w), float(h)],
-                "score": float(d.get("confidence", 0.9))
+            x1 = clamp01(try_float(box[0]))
+            y1 = clamp01(try_float(box[1]))
+            x2 = clamp01(try_float(box[2]))
+            y2 = clamp01(try_float(box[3]))
+            if None in (x1, y1, x2, y2):
+                continue
+            # to xywh in absolute pixels
+            x1a = max(0.0, min(W-1.0, x1 * W))
+            y1a = max(0.0, min(H-1.0, y1 * H))
+            x2a = max(0.0, min(W-1.0, x2 * W))
+            y2a = max(0.0, min(H-1.0, y2 * H))
+            w = max(0.0, x2a - x1a)
+            h = max(0.0, y2a - y1a)
+            results.append({
+                "image_id": im_id,
+                "category_id": cid,
+                "bbox": [x1a, y1a, w, h],
+                "score": float(conf)
             })
+            dt_this += 1
 
-        print(f"[{k}/{len(ids)}] dt={len(dt)}")
+        print(f"[{i}/{len(img_ids)}] dt={dt_this}")
 
-    # Save detections & report JSON success rate
-    with open(args.out, "w") as f:
-        json.dump(dt, f)
+    # save dt json
+    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    with open(args.out, "w", encoding="utf-8") as f:
+        json.dump(results, f)
     print(f"[saved] detections -> {args.out}")
-    jsucc = ok_json / len(ids) if len(ids) else 0.0
-    print(f"[info] JSON success rate: {ok_json}/{len(ids)} = {jsucc:.2%}")
-    print(f"[time] processed {len(ids)} images in {time.time()-t0:.1f}s")
+    print(f"[info] JSON success rate: {ok_json}/{len(img_ids)} = {ok_json/len(img_ids)*100:.2f}%")
+    print(f"[time] processed {len(img_ids)} images in {time.time()-t0:.1f}s")
 
-    # COCO evaluation
-    if len(dt) == 0:
-        print("[warn] No detections recorded. mAP will be 0.0. Check RAW/RETRY outputs above.")
-        sys.exit(0)
+    # Evaluate with COCO
+    if len(results) == 0:
+        print("[warn] empty results; skip COCOeval.")
+        return
 
-    res = coco.loadRes(args.out)
-    e = COCOeval(coco, res, "bbox")
-    e.evaluate(); e.accumulate(); e.summarize()
-    mAP   = float(e.stats[0])   # AP@[.50:.95]
-    AP50  = float(e.stats[1])   # AP@0.50
-    AR100 = float(e.stats[8])   # AR@100
-    print(f"[metrics] mAP@[.50:.95]={mAP:.4f} | AP50={AP50:.4f} | AR@100={AR100:.4f}")
+    coco_dt = coco.loadRes(args.out)
+    coco_eval = COCOeval(coco, coco_dt, iouType='bbox')
+    coco_eval.evaluate()
+    coco_eval.accumulate()
+    coco_eval.summarize()
+
+    # also print a concise line
+    stats = coco_eval.stats
+    print(f"[metrics] mAP@[.50:.95]={stats[0]:.4f} | AP50={stats[1]:.4f} | AR@100={stats[8]:.4f}")
+
 
 if __name__ == "__main__":
     main()
