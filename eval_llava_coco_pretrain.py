@@ -1,269 +1,267 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import os, json, argparse, time, math, random
-from collections import defaultdict
+import argparse, json, math, os, re, time, random
+from pathlib import Path
 from typing import List, Dict, Any
 
 import torch
 from PIL import Image
+from transformers import AutoProcessor, LlavaForConditionalGeneration
 
-from transformers import AutoProcessor, LlavaForConditionalGeneration, StoppingCriteria, StoppingCriteriaList
-
+# COCO API
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
 
-# -----------------------------
-# Utilities
-# -----------------------------
+# ---------- COCO 80 类（字符串 -> 官方 category_id） ----------
+COCO80 = {
+    "person": 1, "bicycle": 2, "car": 3, "motorcycle": 4, "airplane": 5,
+    "bus": 6, "train": 7, "truck": 8, "boat": 9, "traffic light": 10,
+    "fire hydrant": 11, "stop sign": 13, "parking meter": 14, "bench": 15,
+    "bird": 16, "cat": 17, "dog": 18, "horse": 19, "sheep": 20, "cow": 21,
+    "elephant": 22, "bear": 23, "zebra": 24, "giraffe": 25,
+    "backpack": 27, "umbrella": 28, "handbag": 31, "tie": 32, "suitcase": 33,
+    "frisbee": 34, "skis": 35, "snowboard": 36, "sports ball": 37, "kite": 38,
+    "baseball bat": 39, "baseball glove": 40, "skateboard": 41, "surfboard": 42, "tennis racket": 43,
+    "bottle": 44, "wine glass": 46, "cup": 47, "fork": 48, "knife": 49, "spoon": 50, "bowl": 51,
+    "banana": 52, "apple": 53, "sandwich": 54, "orange": 55, "broccoli": 56, "carrot": 57,
+    "hot dog": 58, "pizza": 59, "donut": 60, "cake": 61, "chair": 62, "couch": 63,
+    "potted plant": 64, "bed": 65, "dining table": 67, "toilet": 70, "tv": 72, "laptop": 73,
+    "mouse": 74, "remote": 75, "keyboard": 76, "cell phone": 77, "microwave": 78, "oven": 79,
+    "toaster": 80, "sink": 81, "refrigerator": 82, "book": 84, "clock": 85, "vase": 86,
+    "scissors": 87, "teddy bear": 88, "hair drier": 89, "toothbrush": 90
+}
+ALLOWED_SET = set(COCO80.keys())
 
-def set_torch_flags():
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
 
-def load_image(path: str) -> Image.Image:
-    img = Image.open(path).convert("RGB")
-    return img
+# ---------- 提示词：干净、无类名长表、带约束 ----------
+INSTRUCTION = (
+    "You are an object detection assistant. "
+    "Return ONLY a valid JSON with key 'detections'. "
+    "Each item: {\"label\": <one COCO class>, \"box\": [x1,y1,x2,y2], \"confidence\": [0,1]}. "
+    "Coordinates are normalized to [0,1] with (x1,y1)=top-left and (x2,y2)=bottom-right. "
+    "At most 6 objects. Do NOT repeat the same box or class. "
+    "If two boxes IoU>0.6, keep the one with higher confidence. "
+    "If nothing is found, return {\"detections\":[]}. Output JSON only."
+)
 
-def clamp01(x: float) -> float:
-    return max(0.0, min(1.0, float(x)))
 
-def try_float(v):
+# ---------- 工具函数 ----------
+def iou(boxA, boxB):
+    ax1, ay1, ax2, ay2 = boxA
+    bx1, by1, bx2, by2 = boxB
+    inter_w = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    inter_h = max(0.0, min(ay2, by2) - max(ay1, by1))
+    inter = inter_w * inter_h
+    areaA = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    areaB = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = areaA + areaB - inter + 1e-9
+    return inter / union
+
+
+def robust_json_slice(text: str) -> str:
+    """在长文本里切出最外层 { ... } """
+    s = text.find("{")
+    e = text.rfind("}")
+    if s >= 0 and e > s:
+        return text[s:e + 1]
+    return ""
+
+
+def parse_and_postprocess(raw_text: str) -> List[Dict[str, Any]]:
+    """
+    解析大模型输出，过滤非法项并做 NMS/去重/限数
+    返回标准化后的 detections 列表
+    """
+    body = robust_json_slice(raw_text)
+    if not body:
+        return None
     try:
-        if isinstance(v, list) and len(v) == 1:
-            v = v[0]
-        return float(v)
+        data = json.loads(body)
     except Exception:
         return None
 
-def json_substring(s: str) -> str:
-    """return the substring between last matching {...} if exists"""
-    r = s.rfind("}")
-    if r == -1:
-        return s
-    l = s.rfind("{", 0, r + 1)
-    if l == -1:
-        return s
-    return s[l : r + 1]
-
-def try_parse_json(s: str) -> Dict[str, Any]:
-    s2 = json_substring(s.strip())
-    try:
-        obj = json.loads(s2)
-        if isinstance(obj, dict) and "detections" in obj and isinstance(obj["detections"], list):
-            return obj
-    except Exception:
-        pass
-    return {"detections": []}
-
-def group_topk(dets: List[Dict[str, Any]], k_total=6, k_per_class=2) -> List[Dict[str, Any]]:
-    by_cls = defaultdict(list)
+    dets = data.get("detections", [])
+    clean = []
     for d in dets:
-        lbl = str(d.get("label", "")).strip()
-        sc  = d.get("confidence", 0.0)
-        if not isinstance(sc, (int, float)):
+        try:
+            label = str(d.get("label", "")).strip().lower()
+            if label not in ALLOWED_SET:
+                continue
+            box = [float(x) for x in d.get("box", [])]
+            if len(box) != 4:
+                continue
+            x1 = max(0.0, min(1.0, box[0]))
+            y1 = max(0.0, min(1.0, box[1]))
+            x2 = max(0.0, min(1.0, box[2]))
+            y2 = max(0.0, min(1.0, box[3]))
+            if x2 <= x1 or y2 <= y1:
+                continue
+            conf = float(d.get("confidence", 0.0))
+            # 量化，减少“几乎相同但不同 token”的重复
+            bx = [round(x, 3) for x in [x1, y1, x2, y2]]
+            clean.append({"label": label, "box": bx, "confidence": conf})
+        except Exception:
             continue
-        by_cls[lbl].append((float(sc), d))
+
+    # 置信度排序
+    clean.sort(key=lambda z: z["confidence"], reverse=True)
+
+    # 同类 NMS + 限制最多 K 个
     kept = []
-    for lbl, arr in by_cls.items():
-        arr.sort(key=lambda x: x[0], reverse=True)
-        kept.extend([d for _, d in arr[:k_per_class]])
-    kept.sort(key=lambda d: float(d.get("confidence", 0.0)), reverse=True)
-    return kept[:k_total]
+    K = 6
+    thr = 0.6
+    for d in clean:
+        dup = False
+        for k in kept:
+            if d["label"] == k["label"] and iou(d["box"], k["box"]) > thr:
+                dup = True
+                break
+        if not dup:
+            kept.append(d)
+            if len(kept) >= K:
+                break
+    return kept
 
-class StopOnBrace(StoppingCriteria):
-    """Stop as soon as the model outputs a '}' (optionally followed by newline)."""
-    def __init__(self, tokenizer):
-        self.ids = tokenizer.encode("}", add_special_tokens=False)
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
-        ids = input_ids[0].tolist()
-        L = len(self.ids)
-        return L > 0 and ids[-L:] == self.ids
+
+def boxes_to_coco(dets: List[Dict[str, Any]], image_id: int, W: int, H: int) -> List[Dict[str, Any]]:
+    """将归一化 [x1,y1,x2,y2] 转换为 COCO 的 [x,y,w,h] 绝对像素，并映射到 category_id"""
+    out = []
+    for d in dets:
+        x1, y1, x2, y2 = d["box"]
+        x = max(0, min(W - 1, int(round(x1 * W))))
+        y = max(0, min(H - 1, int(round(y1 * H))))
+        x2p = max(0, min(W - 1, int(round(x2 * W))))
+        y2p = max(0, min(H - 1, int(round(y2 * H))))
+        w = max(0, x2p - x)
+        h = max(0, y2p - y)
+        if w <= 0 or h <= 0:
+            continue
+        cat_id = COCO80[d["label"]]
+        out.append({
+            "image_id": image_id,
+            "category_id": cat_id,
+            "bbox": [float(x), float(y), float(w), float(h)],
+            "score": float(d["confidence"])
+        })
+    return out
 
 
-# -----------------------------
-# Main eval
-# -----------------------------
-
+# ---------- 主流程 ----------
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-dir", type=str, required=True)
+    parser.add_argument("--proc-dir",  type=str, default=None, help="若合并目录缺少处理器配置，可指定基座目录")
     parser.add_argument("--val-ann",   type=str, required=True)
     parser.add_argument("--val-img",   type=str, required=True)
     parser.add_argument("--subset",    type=int, default=500)
-    parser.add_argument("--tokens",    type=int, default=512)
+    parser.add_argument("--tokens",    type=int, default=768)
     parser.add_argument("--out",       type=str, required=True)
-    parser.add_argument("--stop_on_brace", action="store_true", help="stop when '}' is produced")
+    parser.add_argument("--seed",      type=int, default=42)
+    parser.add_argument("--show-raw",  action="store_true", help="打印前几张原始回复")
     args = parser.parse_args()
 
-    set_torch_flags()
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype  = torch.bfloat16 if (device == "cuda" and torch.cuda.get_device_capability()[0] >= 8) else torch.float16
+    dtype  = torch.bfloat16 if device == "cuda" else torch.float32
 
-    print(f"[info] device={device}, dtype={dtype}")
+    # 加载模型 & 处理器（processor 可与模型分离）
+    print(f"[info] loading model from: {args.model-dir}")
+    model = LlavaForConditionalGeneration.from_pretrained(
+        args.model_dir, torch_dtype=dtype, low_cpu_mem_usage=True, device_map=None
+    ).to(device)
+    proc_dir = args.proc_dir if args.proc_dir else args.model_dir
+    print(f"[info] loading processor from: {proc_dir}")
+    processor = AutoProcessor.from_pretrained(proc_dir)
 
-    print("[info] loading model & processor ...")
-    model = LlavaForConditionalGeneration.from_pretrained(args.model_dir, torch_dtype=dtype).to(device)
-    proc  = AutoProcessor.from_pretrained(args.model_dir)
-
-    # Compose instruction (short & strict)
-    class_names = [
-        "person","bicycle","car","motorcycle","airplane","bus","train","truck","boat",
-        "traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat",
-        "dog","horse","sheep","cow","elephant","bear","zebra","giraffe","backpack",
-        "umbrella","handbag","tie","suitcase","frisbee","skis","snowboard","sports ball",
-        "kite","baseball bat","baseball glove","skateboard","surfboard","tennis racket",
-        "bottle","wine glass","cup","fork","knife","spoon","bowl","banana","apple",
-        "sandwich","orange","broccoli","carrot","hot dog","pizza","donut","cake","chair",
-        "couch","potted plant","bed","dining table","toilet","tv","laptop","mouse","remote",
-        "keyboard","cell phone","microwave","oven","toaster","sink","refrigerator","book",
-        "clock","vase","scissors","teddy bear","hair drier","toothbrush"
-    ]
-    instr = (
-        "You are an object detection assistant. "
-        "Return ONLY a valid JSON object with key 'detections'. "
-        "Each item: {\"label\": <one of the COCO-80 list>, \"box\": [x1,y1,x2,y2], \"confidence\": <0..1>}. "
-        "Coordinates are normalized to [0,1] with (x1,y1)=top-left and (x2,y2)=bottom-right. "
-        "If nothing is found, return {\"detections\": []}. "
-        "Use ONLY these labels (singular, English): " + ", ".join(class_names) + ". "
-        "Return at most 6 objects TOTAL. If many boxes of the same class, keep only the top 2 by confidence. "
-        "Round numbers to 2 decimals. Output JSON only. End immediately after the closing '}'."
+    # 生成参数：抑制复读 + 充足长度
+    gen_kwargs = dict(
+        do_sample=False,
+        max_new_tokens=int(args.tokens),
+        repetition_penalty=1.25,
+        no_repeat_ngram_size=12,
+        eos_token_id=model.generation_config.eos_token_id,
+        pad_token_id=model.generation_config.eos_token_id,
     )
 
-    # COCO data
+    # COCO 数据
     coco = COCO(args.val_ann)
+    img_root = Path(args.val_img)
     img_ids = coco.getImgIds()
-    if args.subset > 0:
-        random.seed(0)
-        img_ids = img_ids[:args.subset]
+    img_ids = img_ids[:args.subset] if args.subset > 0 else img_ids
+    print("index created!")
     print(f"[info] subset = {len(img_ids)} images")
 
-    # name -> cat_id map using COCO categories
-    name_to_cid = {}
-    for cat in coco.loadCats(coco.getCatIds()):
-        name_to_cid[cat["name"]] = cat["id"]
-
-    # prepare stopping criteria (optional)
-    stops = StoppingCriteriaList([StopOnBrace(proc.tokenizer)]) if args.stop_on_brace else None
-
-    results = []
+    detections_all = []
     ok_json = 0
     t0 = time.time()
 
-    model.eval()
-    for i, im_id in enumerate(img_ids, 1):
-        info = coco.loadImgs([im_id])[0]
-        img_path = os.path.join(args.val_img, info["file_name"])
-        img = load_image(img_path)
-        W, H = img.size
+    for i, img_id in enumerate(img_ids, 1):
+        info = coco.loadImgs([img_id])[0]
+        img_path = img_root / info["file_name"]
+        W, H = int(info["width"]), int(info["height"])
 
-        # messages with single image + instruction
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": instr}
-                ]
-            }
-        ]
+        image = Image.open(img_path).convert("RGB")
 
-        # build chat prompt
-        prompt = proc.apply_chat_template(messages, add_generation_prompt=True)
-        inputs = proc(text=prompt, images=img, return_tensors="pt").to(device)
+        # 构建多模态 chat messages（LLaVA-HF 推荐写法）
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": INSTRUCTION}
+            ]
+        }]
+        prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
+
+        inputs = processor(images=image, text=prompt, return_tensors="pt").to(device)
 
         with torch.inference_mode():
-            gen_kwargs = dict(
-                max_new_tokens=args.tokens,
-                do_sample=False, temperature=0.0, top_p=1.0,
-                repetition_penalty=1.15,
-                no_repeat_ngram_size=16,
-                eos_token_id=proc.tokenizer.eos_token_id,
-                return_dict_in_generate=True
-            )
-            if stops is not None:
-                gen_kwargs["stopping_criteria"] = stops
+            out_ids = model.generate(**inputs, **gen_kwargs)
+        text = processor.decode(out_ids[0], skip_special_tokens=True)
 
-            out = model.generate(**inputs, **gen_kwargs)
+        if args.show_raw and i <= 5:
+            print(f"==== RAW REPLY (image {i}: {info['file_name']}) ====")
+            print(text)
 
-        # only decode new tokens
-        seq = out.sequences[0]
-        new_tokens = seq[inputs["input_ids"].shape[1]:]
-        txt = proc.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
-
-        # parse with repair
-        src_txt = txt
-        data = try_parse_json(txt)
-
-        # post-filter: keep top-2 per class, top-6 overall
-        dets = data.get("detections", [])
-        dets = group_topk(dets, k_total=6, k_per_class=2)
-
-        # count json success (only when braces existed AND list parsed)
-        if ("{" in src_txt and "}" in src_txt) and isinstance(dets, list):
+        parsed = parse_and_postprocess(text)
+        if parsed is not None:
             ok_json += 1
+            dets_coco = boxes_to_coco(parsed, img_id, W, H)
+            detections_all.extend(dets_coco)
+            dt = len(dets_coco)
+        else:
+            dt = 0
 
-        # convert to COCO dt entries
-        dt_this = 0
-        for d in dets:
-            lbl = str(d.get("label", "")).strip()
-            cid_list = coco.getCatIds(catNms=[lbl]) if lbl else []
-            if not cid_list:
-                continue
-            cid = cid_list[0]
-            box = d.get("box", None)
-            conf = try_float(d.get("confidence", 0.0))
-            if box is None or conf is None:
-                continue
-            if not (isinstance(box, (list, tuple)) and len(box) == 4):
-                continue
-            x1 = clamp01(try_float(box[0]))
-            y1 = clamp01(try_float(box[1]))
-            x2 = clamp01(try_float(box[2]))
-            y2 = clamp01(try_float(box[3]))
-            if None in (x1, y1, x2, y2):
-                continue
-            # to xywh in absolute pixels
-            x1a = max(0.0, min(W-1.0, x1 * W))
-            y1a = max(0.0, min(H-1.0, y1 * H))
-            x2a = max(0.0, min(W-1.0, x2 * W))
-            y2a = max(0.0, min(H-1.0, y2 * H))
-            w = max(0.0, x2a - x1a)
-            h = max(0.0, y2a - y1a)
-            results.append({
-                "image_id": im_id,
-                "category_id": cid,
-                "bbox": [x1a, y1a, w, h],
-                "score": float(conf)
-            })
-            dt_this += 1
+        print(f"[{i}/{len(img_ids)}] dt={dt}")
 
-        print(f"[{i}/{len(img_ids)}] dt={dt_this}")
+    # 保存预测
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(detections_all, f)
+    print(f"[saved] detections -> {out_path}")
 
-    # save dt json
-    os.makedirs(os.path.dirname(args.out), exist_ok=True)
-    with open(args.out, "w", encoding="utf-8") as f:
-        json.dump(results, f)
-    print(f"[saved] detections -> {args.out}")
-    print(f"[info] JSON success rate: {ok_json}/{len(img_ids)} = {ok_json/len(img_ids)*100:.2f}%")
-    print(f"[time] processed {len(img_ids)} images in {time.time()-t0:.1f}s")
+    # JSON 可解析率
+    rate = ok_json / max(1, len(img_ids)) * 100.0
+    print(f"[info] JSON success rate: {ok_json}/{len(img_ids)} = {rate:.2f}%")
 
-    # Evaluate with COCO
-    if len(results) == 0:
-        print("[warn] empty results; skip COCOeval.")
-        return
+    print(f"[time] processed {len(img_ids)} images in {time.time() - t0:.1f}s")
 
-    coco_dt = coco.loadRes(args.out)
-    coco_eval = COCOeval(coco, coco_dt, iouType='bbox')
-    coco_eval.evaluate()
-    coco_eval.accumulate()
-    coco_eval.summarize()
-
-    # also print a concise line
-    stats = coco_eval.stats
-    print(f"[metrics] mAP@[.50:.95]={stats[0]:.4f} | AP50={stats[1]:.4f} | AR@100={stats[8]:.4f}")
+    # mAP/AR
+    if len(detections_all) > 0:
+        coco_dt = coco.loadRes(str(out_path))
+        evaluator = COCOeval(coco, coco_dt, iouType="bbox")
+        evaluator.evaluate()
+        evaluator.accumulate()
+        evaluator.summarize()
+        # 方便 grep 的一行摘要
+        stats = evaluator.stats  # [AP, AP50, AP75, APs, APm, APl, AR1, AR10, AR100, ARs, ARm, ARl]
+        print(f"[metrics] mAP@[.50:.95]={stats[0]:.4f} | AP50={stats[1]:.4f} | AR@100={stats[8]:.4f}")
+    else:
+        print("[warn] empty detections; skip COCOeval.")
 
 
 if __name__ == "__main__":
