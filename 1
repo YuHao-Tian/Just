@@ -641,4 +641,16 @@ python -u /home/vipuser/eval_llava_coco_pretrain.py \
   --show-raw
 ————————————————————
 sed -i 's/args.model-dir/args.model_dir/g; s/args.proc-dir/args.proc_dir/g' /home/vipuser/eval_llava_coco_pretrain.py
+————————————————————————
+python -u /home/vipuser/eval_llava_coco_det.py \
+  --model-dir /home/vipuser/llava-1.5-7b-hf \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 50 \
+  --tokens 768 \
+  --min-conf 0.35 \
+  --nms-iou 0.55 \
+  --max-objects 6 \
+  --out /home/vipuser/coco/llava_dt_BASE_50.json \
+  --show-raw
 
