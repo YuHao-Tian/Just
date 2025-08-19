@@ -409,3 +409,21 @@ Unknown command: merge-lora.
   --export_dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged
 
 ls -lah /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged
+
+[WARNING|2025-08-19 11:54:02] llamafactory.data.template:148 >> `template` was not specified, try parsing the chat template from the tokenizer.
+Traceback (most recent call last):
+  File "/home/vipuser/miniforge3/envs/lf/bin/llamafactory-cli", line 7, in <module>
+    sys.exit(main())
+  File "/home/vipuser/LLaMA-Factory/src/llamafactory/cli.py", line 151, in main
+    COMMAND_MAP[command]()
+  File "/home/vipuser/LLaMA-Factory/src/llamafactory/train/tuner.py", line 125, in export_model
+    template = get_template_and_fix_tokenizer(tokenizer, data_args)
+  File "/home/vipuser/LLaMA-Factory/src/llamafactory/data/template.py", line 596, in get_template_and_fix_tokenizer
+    template = parse_template(tokenizer)
+  File "/home/vipuser/LLaMA-Factory/src/llamafactory/data/template.py", line 573, in parse_template
+    format_user=StringFormatter(slots=[user_slot]),
+  File "<string>", line 5, in __init__
+  File "/home/vipuser/LLaMA-Factory/src/llamafactory/data/formatter.py", line 70, in __post_init__
+    raise ValueError("A placeholder is required in the string formatter.")
+ValueError: A placeholder is required in the string formatter.
+
