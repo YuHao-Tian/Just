@@ -427,3 +427,8 @@ Traceback (most recent call last):
     raise ValueError("A placeholder is required in the string formatter.")
 ValueError: A placeholder is required in the string formatter.
 
+~/miniforge3/envs/lf/bin/llamafactory-cli export \
+  --model_name_or_path /home/vipuser/llava-1.5-7b-hf \
+  --adapter_name_or_path /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs \
+  --export_dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged \
+  --template llava
