@@ -604,3 +604,27 @@ if torch.cuda.is_available():
     y = x @ x.t()
     print("matmul_ok:", float(y[0,0]).__class__ is float or True)
 PY
+——————————————————————
+# 在 lf 环境里，直接用环境内的可执行文件最稳
+PYTORCH_SDP_KERNEL=math \
+~/miniforge3/envs/lf/bin/llamafactory-cli train \
+  --stage sft \
+  --finetuning_type lora \
+  --model_name_or_path /home/vipuser/llava-1.5-7b-hf \
+  --dataset_dir /home/vipuser/lf_data \
+  --dataset coco_detjson_train \
+  --eval_dataset coco_detjson_val \
+  --template llava \
+  --cutoff_len 4096 \
+  --learning_rate 5e-05 \
+  --num_train_epochs 3 \
+  --per_device_train_batch_size 2 \
+  --gradient_accumulation_steps 8 \
+  --lora_rank 8 \
+  --lora_alpha 16 \
+  --lora_dropout 0.1 \
+  --lora_target all \
+  --do_train true \
+  --do_eval true \
+  --overwrite_output_dir true \
+  2>&1 | tee /home/vipuser/saves/train_full.log
