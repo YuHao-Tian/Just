@@ -189,3 +189,61 @@ If your task is similar to the task the model of the checkpoint was trained on, 
 [INFO|trainer.py:2442] 2025-08-19 10:11:30,082 >>   Number of trainable parameters = 19,988,480
   0%|          | 0/22179 [00:00<?, ?it/s][WARNING|logging.py:328] 2025-08-19 10:11:31,452 >> `loss_type=None` was set in the config but it is unrecognised.Using the default loss: `ForCausalLMLoss`.
   0%|          | 20/22179 [04:08<75:41:47, 12.30s/it]       
+
+_______________________
+[INFO|trainer.py:2442] 2025-08-19 11:27:04,348 >>   Number of trainable parameters = 19,988,480
+  0%|          | 0/32 [00:00<?, ?it/s]Traceback (most recent call last):
+  File "/home/vipuser/miniforge3/envs/lf/bin/llamafactory-cli", line 7, in <module>
+    sys.exit(main())
+  File "/home/vipuser/LLaMA-Factory/src/llamafactory/cli.py", line 151, in main
+    COMMAND_MAP[command]()
+  File "/home/vipuser/LLaMA-Factory/src/llamafactory/train/tuner.py", line 110, in run_exp
+    _training_function(config={"args": args, "callbacks": callbacks})
+  File "/home/vipuser/LLaMA-Factory/src/llamafactory/train/tuner.py", line 72, in _training_function
+    run_sft(model_args, data_args, training_args, finetuning_args, generating_args, callbacks)
+  File "/home/vipuser/LLaMA-Factory/src/llamafactory/train/sft/workflow.py", line 96, in run_sft
+    train_result = trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/transformers/trainer.py", line 2238, in train
+    return inner_training_loop(
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/transformers/trainer.py", line 2582, in _inner_training_loop
+    tr_loss_step = self.training_step(model, inputs, num_items_in_batch)
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/transformers/trainer.py", line 3796, in training_step
+    loss = self.compute_loss(model, inputs, num_items_in_batch=num_items_in_batch)
+  File "/home/vipuser/LLaMA-Factory/src/llamafactory/train/sft/trainer.py", line 108, in compute_loss
+    return super().compute_loss(model, inputs, *args, **kwargs)
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/transformers/trainer.py", line 3884, in compute_loss
+    outputs = model(**inputs)
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/accelerate/utils/operations.py", line 818, in forward
+    return model_forward(*args, **kwargs)
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/accelerate/utils/operations.py", line 806, in __call__
+    return convert_to_fp32(self.model_forward(*args, **kwargs))
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/torch/amp/autocast_mode.py", line 44, in decorate_autocast
+    return func(*args, **kwargs)
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/peft/peft_model.py", line 1757, in forward
+    return self.base_model(
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/peft/tuners/tuners_utils.py", line 193, in forward
+    return self.model.forward(*args, **kwargs)
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/transformers/utils/generic.py", line 959, in wrapper
+    output = func(self, *args, **kwargs)
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/transformers/models/llava/modeling_llava.py", line 445, in forward
+    outputs = self.model(
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/transformers/utils/generic.py", line 959, in wrapper
+    output = func(self, *args, **kwargs)
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/transformers/models/llava/modeling_llava.py", line 293, in forward
+    special_image_mask = self.get_placeholder_mask(
+  File "/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/transformers/models/llava/modeling_llava.py", line 240, in get_placeholder_mask
+    raise ValueError(
+ValueError: Image features and image tokens do not match: tokens: 1129, features 4718592
+  0%|          | 0/32 [00:01<?, ?it/s]
