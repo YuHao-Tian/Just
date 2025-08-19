@@ -253,18 +253,14 @@ OUT=/home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs
 
 _________________
 
-    sys.exit(main())
-  File "/home/vipuser/LLaMA-Factory/src/llamafactory/cli.py", line 151, in main
-    COMMAND_MAP[command]()
-  File "/home/vipuser/LLaMA-Factory/src/llamafactory/train/tuner.py", line 110, in run_exp
-    _training_function(config={"args": args, "callbacks": callbacks})
-  File "/home/vipuser/LLaMA-Factory/src/llamafactory/train/tuner.py", line 55, in _training_function
-    model_args, data_args, training_args, finetuning_args, generating_args = get_train_args(args)
-  File "/home/vipuser/LLaMA-Factory/src/llamafactory/hparams/parser.py", line 209, in get_train_args
-    model_args, data_args, training_args, finetuning_args, generating_args = _parse_train_args(args)
-  File "/home/vipuser/LLaMA-Factory/src/llamafactory/hparams/parser.py", line 187, in _parse_train_args
-    return _parse_args(parser, args, allow_extra_keys=allow_extra_keys)
-  File "/home/vipuser/LLaMA-Factory/src/llamafactory/hparams/parser.py", line 85, in _parse_args
-    raise ValueError(f"Some specified arguments are not used by the HfArgumentParser: {unknown_args}")
-ValueError: Some specified arguments are not used by the HfArgumentParser: [' ']
---bf16: command not found
+PYTORCH_SDP_KERNEL=mem_efficient NVIDIA_TF32_OVERRIDE=1 HF_DATASETS_CACHE=/home/vipuser/hf_cache OMP_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false \
+~/miniforge3/envs/lf/bin/llamafactory-cli train --stage sft --finetuning_type lora \
+ --model_name_or_path /home/vipuser/llava-1.5-7b-hf \
+ --dataset_dir /home/vipuser/lf_data/mini500 --dataset coco_detjson_train500 \
+ --template llava --cutoff_len 2048 --bf16 true --tf32 true --optim adamw_torch_fused \
+ --per_device_train_batch_size 2 --gradient_accumulation_steps 8 --num_train_epochs 1 --learning_rate 5e-05 \
+ --lora_rank 8 --lora_alpha 16 --lora_dropout 0.1 --lora_target all --do_train true --do_eval false \
+ --dataloader_num_workers 8 --preprocessing_num_workers 8 \
+ --output_dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs --overwrite_output_dir true \
+ 2>&1 | tee /home/vipuser/saves/train_500imgs.log
+
