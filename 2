@@ -265,4 +265,96 @@ PYTORCH_SDP_KERNEL=mem_efficient NVIDIA_TF32_OVERRIDE=1 HF_DATASETS_CACHE=/home/
  2>&1 | tee /home/vipuser/saves/train_500imgs.log
 ________________
 ValueError: The number of images does not match the number of <image> tokens in [{'content': 'You are an object detection assistant. Return ONLY a valid JSON object with key \'detections\'. Each item: {"label": <one of COCO-80>, "box": [x1,y1,x2,y2], "confidence": [0,1]}. Coordinates are normalized to [0,1] with (x1,y1)=top-left and (x2,y2)=bottom-right. If nothing is found, return {"detections":[]}. Output JSON only.', 'role': 'user'}, {'content': '{"detections": [{"label": "giraffe", "box": [0.30384976525821594, 0.21798437499999998, 1.0, 0.9056249999999999], "confidence": 1.0}, {"label": "giraffe", "box": [0.06068075117370892, 0.1414375, 0.9840140845070422, 0.88734375], "confidence": 1.0}]}', 'role': 'assistant'}].
+——————————————————————————————————————————
+1.
+python - <<'PY'
+import json, re, pathlib
+
+base = pathlib.Path("/home/vipuser/lf_data/mini500")
+in_train = base/"train500.jsonl"
+in_val   = base/"val100.jsonl"     # 若没有 val100.jsonl，可以忽略这一行和下面相应处理
+out_train = base/"train500_norm.jsonl"
+out_val   = base/"val100_norm.jsonl"
+
+def norm_line(js):
+    # 1) 保证 images 恰好 1 张
+    imgs = js.get("images") or js.get("image") or []
+    if isinstance(imgs, str): imgs = [imgs]
+    assert isinstance(imgs, list), "images 字段必须是列表"
+    assert len(imgs) >= 1, "每条样本必须至少 1 张图"
+    js["images"] = [imgs[0]]  # 只保留第一张
+
+    # 2) 只改“用户”那条消息：确保恰好 1 个 <image>，放在开头
+    conv = js["conversations"]
+    # 找第一条用户消息
+    for m in conv:
+        if m.get("from") == "user":
+            # 去掉所有已有的 <image>（可能有多个或位置不对）
+            txt = re.sub(r'\s*<image>\s*\n?', '', m["value"])
+            # 重新在最前面补上 1 个
+            m["value"] = "<image>\n" + txt.strip()
+            break
+    return js
+
+def process(fin, fout):
+    if not fin.exists(): return
+    with fin.open() as f, fout.open("w") as g:
+        for line in f:
+            js = json.loads(line)
+            js = norm_line(js)
+            g.write(json.dumps(js, ensure_ascii=False) + "\n")
+
+process(in_train, out_train)
+process(in_val, out_val)
+print("done")
+PY
+
+2.
+{
+  "coco_detjson_train500": {
+    "file_name": "train500_norm.jsonl",
+    "formatting": "sharegpt",
+    "columns": { "messages": "conversations", "images": "images" },
+    "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
+    "multi_modal": true
+  },
+  "coco_detjson_val100": {
+    "file_name": "val100_norm.jsonl",
+    "formatting": "sharegpt",
+    "columns": { "messages": "conversations", "images": "images" },
+    "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
+    "multi_modal": true
+  }
+}
+
+3.
+python - <<'PY'
+import json, re, sys, pathlib
+base="/home/vipuser/lf_data/mini500"
+bad=0
+for name in ["train500_norm.jsonl","val100_norm.jsonl"]:
+    p=pathlib.Path(base)/name
+    if not p.exists(): continue
+    with p.open() as f:
+        for ln,line in enumerate(f,1):
+            js=json.loads(line)
+            n_img = len(js.get("images",[]))
+            txt=" ".join(m["value"] for m in js["conversations"] if m.get("from")=="user")
+            n_tok = len(re.findall(r"<image>", txt))
+            if n_img!=1 or n_tok!=1:
+                bad+=1
+                if bad<=5: print("BAD:", name, "line", ln, "n_img", n_img, "n_tok", n_tok)
+print("done; bad=", bad)
+PY
+4.
+PYTORCH_SDP_KERNEL=math NVIDIA_TF32_OVERRIDE=1 HF_DATASETS_CACHE=/home/vipuser/hf_cache OMP_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false \
+~/miniforge3/envs/lf/bin/llamafactory-cli train --stage sft --finetuning_type lora \
+ --model_name_or_path /home/vipuser/llava-1.5-7b-hf \
+ --dataset_dir /home/vipuser/lf_data/mini500 --dataset coco_detjson_train500 \
+ --template llava --cutoff_len 2048 --bf16 true --tf32 true \
+ --per_device_train_batch_size 2 --gradient_accumulation_steps 8 --num_train_epochs 1 --learning_rate 5e-05 \
+ --lora_rank 8 --lora_alpha 16 --lora_dropout 0.1 --lora_target all --do_train true --do_eval false \
+ --dataloader_num_workers 8 --preprocessing_num_workers 8 --overwrite_cache true \
+ --output_dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs --overwrite_output_dir true \
+ 2>&1 | tee /home/vipuser/saves/train_500imgs.log
 
