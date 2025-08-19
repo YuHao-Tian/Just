@@ -357,4 +357,28 @@ PYTORCH_SDP_KERNEL=math NVIDIA_TF32_OVERRIDE=1 HF_DATASETS_CACHE=/home/vipuser/h
  --dataloader_num_workers 8 --preprocessing_num_workers 8 --overwrite_cache true \
  --output_dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs --overwrite_output_dir true \
  2>&1 | tee /home/vipuser/saves/train_500imgs.log
+_____________________________________________________________________
+# 合并
+~/miniforge3/envs/lf/bin/llamafactory-cli merge-lora \
+  --model_name_or_path   /home/vipuser/llava-1.5-7b-hf \
+  --adapter_name_or_path /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs \
+  --output_dir           /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged
+
+# 先跑 500 张 val 子集看趋势
+PYTORCH_SDP_KERNEL=math \
+python -u /home/vipuser/eval_llava_coco_pretrain.py \
+  --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 500 --tokens 160 \
+  --out /home/vipuser/coco/llava_dt_lora_500imgs_subset.json
+
+# 看起来靠谱，再跑全量 val2017
+PYTORCH_SDP_KERNEL=math \
+python -u /home/vipuser/eval_llava_coco_pretrain.py \
+  --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --tokens 160 \
+  --out /home/vipuser/coco/llava_dt_lora_500imgs_full.json
 
