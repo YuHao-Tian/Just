@@ -86,12 +86,13 @@ def extract_accuracy(text: str) -> Optional[float]:
 
 PROMPT_TEMPLATE = (
     "Perform object detection on this image. Then output ONLY ONE JSON object with two keys:\n"
-    " 1) \"detections\": a list like [{\"label\":\"<category>\", \"box\":[x1,y1,x2,y2], \"confidence\":0.xx}],\n"
+    " 1) \"detections\": a list like [{{\"label\":\"<category>\", \"box\":[x1,y1,x2,y2], \"confidence\":0.xx}}],\n"
     "    coordinates normalized to [0,1] (top-left x1,y1; bottom-right x2,y2), up to {max_objects} items;\n"
     " 2) \"self_report\": {{\"accuracy\": A}}, where A is YOUR estimated overall detection accuracy for this image\n"
     "    as a float in [0,1], rounded to 3 decimals (or percentage like 87%).\n"
     "Use concise English category names (COCO-style if applicable). No markdown/code fences, no explanations."
 )
+
 
 def build_messages(prompt_text: str):
     # chat-template 输入：content 里先 image 再 text（不要在 text 里写 <image>）
