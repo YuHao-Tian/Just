@@ -1,41 +1,71 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-COCO eval for LLaVA-1.5 (BASE vs LoRA), robust JSON + NMS  —— Chat Template 版
-- 用 chat template 喂图：messages=[{"role":"user","content":[{"type":"image"},{"type":"text","text": prompt}]}]
-- prompt 里 **不要写** <image>
-- 严格 JSON 指令、鲁棒解析、类内/全局 NMS、可调阈值
-
-Usage:
-  python -u /home/vipuser/eval_llava_coco_chat.py \
-    --model-dir /home/vipuser/llava-1.5-7b-hf \
-    --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
-    --val-img  /home/vipuser/coco/images/val2017 \
-    --subset 500 \
-    --tokens 1024 --min-conf 0.30 --nms-iou 0.60 --max-objects 12 \
-    --out /home/vipuser/coco/BASE.json --save-raw --quiet
-
-  python -u /home/vipuser/eval_llava_coco_chat.py \
-    --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_merged \
-    --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
-    --val-img  /home/vipuser/coco/images/val2017 \
-    --subset 500 \
-    --tokens 1024 --min-conf 0.30 --nms-iou 0.60 --max-objects 12 \
-    --out /home/vipuser/coco/LORA.json --save-raw --quiet
+COCO eval for LLaVA-1.5 (BASE vs LoRA) — solid version (old pretrain path)
+- No chat template; prompt contains exactly one "<image>"
+- Robust JSON extraction (object/array, code fences, suffix repair)
+- Confidence filter + classwise NMS + global NMS + cap
+- Greedy decoding; decode only newly generated tokens
 """
 
-import os
-import re
-import json
-import argparse
+import os, re, json, argparse, time, sys
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 from PIL import Image
+from transformers import AutoProcessor, LlavaForConditionalGeneration
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
-from transformers import AutoProcessor, LlavaForConditionalGeneration
+
+# ---------------------------
+# Robust JSON extraction
+# ---------------------------
+
+def _strip_code_fences(text: str) -> str:
+    t = text.strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-zA-Z0-9]*\n?", "", t).strip()
+        if t.endswith("```"):
+            t = t[:-3].strip()
+    return t
+
+def parse_detections(text: str) -> List[Dict[str, Any]]:
+    """
+    Extract detections list from model text:
+      - {"detections":[...]} or {"objects":[...]}
+      - Or a top-level array: [ {...}, {...} ]
+      - Handle ```json fences / ASSISTANT: prefix / truncated suffix
+    Return: list[dict]
+    """
+    t = _strip_code_fences(text)
+    t = re.sub(r"^(ASSISTANT|Assistant|assistant)\s*:\s*", "", t).strip()
+
+    def _loads(s):
+        try: return json.loads(s)
+        except Exception: return None
+
+    obj = _loads(t)
+    if obj is None:
+        m = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", t)
+        if m:
+            obj = _loads(m.group(1))
+            base = m.group(1)
+        else:
+            base = t
+        if obj is None:
+            for suf in ("}]}", "}}", "]}", "}"):
+                obj = _loads(base + suf)
+                if obj is not None:
+                    break
+
+    if isinstance(obj, dict):
+        dets = obj.get("detections")
+        if not isinstance(dets, list):
+            dets = obj.get("objects")
+        return dets if isinstance(dets, list) else []
+    if isinstance(obj, list):
+        return obj
+    return []
 
 # ---------------------------
 # IoU & NMS (COCO xywh)
@@ -49,7 +79,7 @@ def iou_xywh(b1: List[float], b2: List[float]) -> float:
     inter_w = max(0.0, min(xa2, xb2) - max(xa1, xb1))
     inter_h = max(0.0, min(ya2, yb2) - max(ya1, yb1))
     inter = inter_w * inter_h
-    union = w1 * h1 + w2 * h2 - inter + 1e-6
+    union = w1*h1 + w2*h2 - inter + 1e-6
     return inter / union
 
 def nms_xywh(dets: List[Dict[str, Any]], iou_thr: float) -> List[Dict[str, Any]]:
@@ -66,100 +96,71 @@ def nms_xywh(dets: List[Dict[str, Any]], iou_thr: float) -> List[Dict[str, Any]]
     return keep
 
 # ---------------------------
-# Robust JSON extraction
-# ---------------------------
-
-def strip_code_fences(text: str) -> str:
-    t = text.strip()
-    if t.startswith("```"):
-        t = re.sub(r"^```[a-zA-Z0-9]*\n?", "", t).strip()
-        if t.endswith("```"):
-            t = t[:-3].strip()
-    return t
-
-def recover_json_object(text: str) -> Dict[str, Any]:
-    """Try to extract a single JSON object; do light repairs; else return empty schema."""
-    t = strip_code_fences(text)
-    s, e = t.find("{"), t.rfind("}")
-    if s != -1 and e != -1 and e > s:
-        core = t[s : e + 1]
-        try:
-            return json.loads(core)
-        except Exception:
-            for suff in ("}]}", "}}", "]}", "}"):
-                try:
-                    return json.loads(core + suff)
-                except Exception:
-                    pass
-    m = re.search(r"\{.*\}", t, flags=re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(0))
-        except Exception:
-            pass
-    return {"detections": []}
-
-# ---------------------------
 # Label canonicalization
 # ---------------------------
 
 COMMON_ALIASES = {
     "tv": "tv", "television": "tv", "tv monitor": "tv", "tvmonitor": "tv",
     "motorbike": "motorcycle", "aeroplane": "airplane",
-    "trafficlight": "traffic light", "hydrant": "fire hydrant",
-    "sofa": "couch", "bike": "bicycle", "sportsball": "sports ball",
+    "trafficlight": "traffic light", "firehydrant": "fire hydrant", "hydrant": "fire hydrant",
+    "sportsball": "sports ball", "wineglass": "wine glass", "wine-glass": "wine glass",
+    "tennis-racket": "tennis racket", "baseball-bat": "baseball bat", "baseball-glove": "baseball glove",
+    "sofa": "couch", "bike": "bicycle"
 }
 
 def canon_label(name: str, valid: set) -> Optional[str]:
-    n = (name or "").strip().lower().replace("_", " ")
-    if n in COMMON_ALIASES:
-        n = COMMON_ALIASES[n]
-    if n.endswith("s") and n[:-1] in valid:
+    n = (name or "").strip().lower().replace("_", " ").replace("-", " ")
+    while "  " in n:
+        n = n.replace("  ", " ")
+    n = COMMON_ALIASES.get(n, n)
+    if n.endswith("s") and n[:-1] in valid:  # crude singular
         n = n[:-1]
     return n if n in valid else None
 
 # ---------------------------
-# Build strict JSON prompt (NO <image> here!)
+# Prompt (contains exactly one <image>)
 # ---------------------------
 
 def build_prompt(class_names: List[str], max_objects: int) -> str:
     cls_str = ", ".join(class_names)
     return (
-        "Detect objects in the image and return ONLY ONE valid JSON object with key 'detections'.\n"
+        "<image>\n"
+        "Detect objects in the image and return ONLY ONE valid JSON with key 'detections'.\n"
         "Each item: {\"label\":\"<one_of_COCO80>\", \"box\":[x1,y1,x2,y2], \"confidence\":0.xx}.\n"
-        "Rules: coordinates are normalized floats in [0,1], top-left (x1,y1), bottom-right (x2,y2), x1<x2, y1<y2.\n"
+        "Rules: coordinates normalized to [0,1], top-left (x1,y1), bottom-right (x2,y2), x1<x2, y1<y2.\n"
         "Round numbers to 3 decimals. Use ONLY these labels (singular, English): " + cls_str + ".\n"
         f"At most {max_objects} objects. Omit low-confidence objects.\n"
         "No markdown, no code fences, no explanations. Output JSON only."
     )
 
 # ---------------------------
-# Generation with chat template
+# Greedy generation (no chat template)
 # ---------------------------
 
-def generate_for_image(
+def gen_text(
     model,
-    processor,
+    proc,
     image: Image.Image,
     prompt: str,
+    device: str,
     max_new_tokens: int,
 ) -> str:
-    messages = [
-        {"role": "user",
-         "content": [
-             {"type": "image"},
-             {"type": "text", "text": prompt}
-         ]}
-    ]
-    chat = processor.apply_chat_template(messages, add_generation_prompt=True)
-    inputs = processor(images=image, text=chat, return_tensors="pt").to(model.device)
+    inputs = proc(images=image, text=prompt, return_tensors="pt")
+    inputs = {k: (v.to(device) if hasattr(v, "to") else v) for k, v in inputs.items()}
     with torch.inference_mode():
-        output_ids = model.generate(
+        out = model.generate(
             **inputs,
             do_sample=False,
             max_new_tokens=max_new_tokens,
+            return_dict_in_generate=True,
+            eos_token_id=getattr(proc.tokenizer, "eos_token_id", None),
+            pad_token_id=getattr(proc.tokenizer, "pad_token_id", None)
+                        or getattr(proc.tokenizer, "eos_token_id", None),
         )
-    return processor.batch_decode(output_ids, skip_special_tokens=True)[0]
+    seq = out.sequences[0]
+    # Decode only newly generated tokens (exclude prompt)
+    gen_ids = seq[inputs["input_ids"].shape[-1]:]
+    return proc.decode(gen_ids, skip_special_tokens=True).strip()
 
 # ---------------------------
 # Main
@@ -171,39 +172,30 @@ def main():
     ap.add_argument("--val-ann",   required=True, type=str)
     ap.add_argument("--val-img",   required=True, type=str)
     ap.add_argument("--subset",    type=int, default=500)
-    ap.add_argument("--tokens",    type=int, default=1024)
+    ap.add_argument("--tokens",    type=int, default=512)
     ap.add_argument("--min-conf",  type=float, default=0.30)
     ap.add_argument("--nms-iou",   type=float, default=0.60)
     ap.add_argument("--max-objects", type=int, default=12)
     ap.add_argument("--out",       required=True, type=str)
     ap.add_argument("--save-raw",  action="store_true")
-    ap.add_argument("--quiet",     action="store_true", help="suppress HF warnings")
+    ap.add_argument("--progress-every", type=int, default=10)
     args = ap.parse_args()
 
-    if args.quiet:
-        try:
-            from transformers.utils import logging as hf_logging
-            hf_logging.set_verbosity_error()
-            os.environ["TRANSFORMERS_VERBOSITY"] = "error"
-        except Exception:
-            pass
-
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype  = torch.bfloat16 if device == "cuda" else torch.float32
 
     print(f"[Load] {args.model_dir}")
     model = LlavaForConditionalGeneration.from_pretrained(
-        args.model_dir,
-        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-        device_map="auto" if device == "cuda" else None,
-    )
-    processor = AutoProcessor.from_pretrained(args.model_dir)
+        args.model_dir, torch_dtype=dtype
+    ).to(device).eval()
+    proc  = AutoProcessor.from_pretrained(args.model_dir)
 
-    # sanitize generation config to avoid sampler warnings
+    # sanitize generation config (avoid sampler warnings)
     try:
         gc = model.generation_config
         gc.do_sample = False
         gc.num_beams = 1
-        for k in ("temperature", "top_p", "top_k", "typical_p"):
+        for k in ("temperature","top_p","top_k","typical_p"):
             if hasattr(gc, k):
                 setattr(gc, k, None)
     except Exception:
@@ -211,68 +203,65 @@ def main():
 
     print(f"[COCO] Anns: {args.val_ann}\n[COCO] Images dir: {args.val_img}")
     coco = COCO(args.val_ann)
-    img_ids = coco.getImgIds()
-    if args.subset and args.subset > 0:
-        img_ids = img_ids[: args.subset]
 
+    # classes
     cats = coco.loadCats(coco.getCatIds())
     id2name = {c["id"]: c["name"].strip().lower() for c in cats}
     name2id = {v: k for k, v in id2name.items()}
     class_names = [id2name[i] for i in sorted(id2name.keys())]
     valid_names = set(class_names)
 
+    # images
+    img_ids = coco.getImgIds()
+    if args.subset and args.subset > 0:
+        img_ids = img_ids[: args.subset]
+    info = {im["id"]: im for im in coco.dataset["images"]}
+
     prompt = build_prompt(class_names, args.max_objects)
-    retry_msg = "Only output a single valid JSON object with the key 'detections'. No extra words."
+    strict_retry = "Return ONLY one JSON object with key 'detections' and no extra text."
 
     dt: List[Dict[str, Any]] = []
-    raw_texts: List[Tuple[int, str]] = []
+    raw_dump: List[Tuple[int, str]] = []
 
-    print(
-        f"[Eval] Images: {len(img_ids)} | tokens={args.tokens} "
-        f"min_conf={args.min_conf} nms_iou={args.nms_iou} max_objects={args.max_objects}"
-    )
+    print(f"[Eval] Images: {len(img_ids)} | tokens={args.tokens} min_conf={args.min_conf} "
+          f"nms_iou={args.nms_iou} max_objects={args.max_objects}")
 
+    t0 = time.time()
     for i, img_id in enumerate(img_ids, 1):
-        info = coco.loadImgs([img_id])[0]
-        W, H = int(info["width"]), int(info["height"])
-        img_path = os.path.join(args.val_img, info["file_name"])
+        meta = info[img_id]
+        W, H = int(meta["width"]), int(meta["height"])
+        img_path = os.path.join(args.val_img, meta["file_name"])
         try:
             image = Image.open(img_path).convert("RGB")
         except Exception as e:
             print(f"[Warn] open image failed: {img_path} ({e})")
             continue
 
-        # first attempt
-        text = generate_for_image(model, processor, image, prompt, max_new_tokens=args.tokens)
-        obj = recover_json_object(text)
+        # first try
+        text = gen_text(model, proc, image, prompt, device, max_new_tokens=args.tokens)
+        dets = parse_detections(text)
 
-        if not isinstance(obj, dict) or "detections" not in obj:
-            # strict retry
-            text2 = generate_for_image(
-                model, processor, image,
-                retry_msg, max_new_tokens=args.tokens
-            )
-            obj2 = recover_json_object(text2)
-            # choose the one with more structure
-            text, obj = (text2, obj2) if len(json.dumps(obj2)) > len(json.dumps(obj)) else (text, obj)
+        # strict retry if empty
+        if not dets:
+            t2 = gen_text(model, proc, image, strict_retry, device, max_new_tokens=args.tokens)
+            d2 = parse_detections(t2)
+            if len(d2) > len(dets):
+                dets = d2
+                text = t2
 
         if args.save_raw:
-            raw_texts.append((img_id, text))
+            raw_dump.append((img_id, text))
 
-        dets = obj.get("detections", obj.get("objects", []))  # fallback key name
-        if not isinstance(dets, list):
-            dets = []
-
+        # collect raw boxes
         raw: List[Dict[str, Any]] = []
-        for d in dets[: (args.max_objects * 2)]:  # allow some redundancy, prune later
+        for d in dets[: (args.max_objects * 3)]:
             if not isinstance(d, dict):
                 continue
             # label
             lab = canon_label(str(d.get("label", "")), valid_names)
             if lab is None:
                 continue
-
-            # box: support [x1,y1,x2,y2] normalized or absolute
+            # box: support box/bbox, normalized or absolute x1y1x2y2
             box = d.get("box", d.get("bbox"))
             if not (isinstance(box, (list, tuple)) and len(box) == 4):
                 continue
@@ -281,38 +270,25 @@ def main():
             except Exception:
                 continue
 
-            # detect whether normalized or absolute
+            # detect normalized vs absolute
             normalized = max(x1, y1, x2, y2) <= 1.2
             if normalized:
-                # clamp + order
-                x1 = max(0.0, min(1.0, x1))
-                y1 = max(0.0, min(1.0, y1))
-                x2 = max(0.0, min(1.0, x2))
-                y2 = max(0.0, min(1.0, y2))
+                x1 = max(0.0, min(1.0, x1)); y1 = max(0.0, min(1.0, y1))
+                x2 = max(0.0, min(1.0, x2)); y2 = max(0.0, min(1.0, y2))
                 if x2 <= x1 or y2 <= y1:
                     continue
-                x = x1 * W
-                y = y1 * H
-                w = (x2 - x1) * W
-                h = (y2 - y1) * H
+                x = x1 * W; y = y1 * H; w = (x2 - x1) * W; h = (y2 - y1) * H
             else:
-                # assume absolute x1y1x2y2 in pixels
                 if x2 <= x1 or y2 <= y1:
                     continue
-                x = x1
-                y = y1
-                w = x2 - x1
-                h = y2 - y1
+                x = x1; y = y1; w = (x2 - x1); h = (y2 - y1)
 
             if w <= 1 or h <= 1:
                 continue
 
-            # score with fallback + clamp
             s = d.get("confidence", d.get("score", 0.5))
-            try:
-                s = float(s)
-            except Exception:
-                s = 0.5
+            try: s = float(s)
+            except Exception: s = 0.5
             if s < 0.0: s = 0.0
             if s > 1.0: s = 1.0
 
@@ -323,25 +299,22 @@ def main():
                 "score": float(s),
             })
 
-        # postprocess: conf -> classwise NMS -> global NMS -> cap
+        # postprocess
         kept = [r for r in raw if r["score"] >= args.min_conf]
-
         by_cls: Dict[int, List[Dict[str, Any]]] = {}
         for r in kept:
             by_cls.setdefault(int(r["category_id"]), []).append(r)
         kept2: List[Dict[str, Any]] = []
         for _, items in by_cls.items():
             kept2.extend(nms_xywh(items, args.nms_iou))
-
         kept3 = nms_xywh(kept2, args.nms_iou)
         kept3 = sorted(kept3, key=lambda d: d["score"], reverse=True)[: args.max_objects]
-
         dt.extend(kept3)
 
-        if i % 50 == 0:
-            print(f"  processed {i}/{len(img_ids)} images, current dt={len(dt)}")
+        if (i <= 5) or (i % args.progress_every == 0):
+            print(f"[{i}/{len(img_ids)}] dt={len(dt)} (raw this img: {len(raw)} -> kept {len(kept3)})")
 
-    # save detections
+    # save
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(dt, f)
@@ -350,26 +323,22 @@ def main():
     if args.save_raw:
         raw_path = os.path.splitext(args.out)[0] + ".raw.txt"
         with open(raw_path, "w", encoding="utf-8") as f:
-            for img_id, t in raw_texts:
+            for img_id, t in raw_dump:
                 f.write(f"# image_id={img_id}\n{t}\n\n")
         print(f"[Save] Raw generations -> {raw_path}")
 
-    # COCOeval
+    # eval
     print("[COCOeval] Running evaluation…")
-    cocoDt = coco.loadRes(args.out) if len(dt) > 0 else None
-    if cocoDt is None:
+    if len(dt) == 0:
         print("[Warn] No detections, skipping COCOeval.")
         return
-    coco_eval = COCOeval(coco, cocoDt, iouType="bbox")
-    coco_eval.evaluate()
-    coco_eval.accumulate()
-    coco_eval.summarize()
-
-    AP, AP50, AR100 = coco_eval.stats[0], coco_eval.stats[1], coco_eval.stats[8]
+    cocoDt = coco.loadRes(args.out)
+    e = COCOeval(coco, cocoDt, iouType="bbox")
+    e.evaluate(); e.accumulate(); e.summarize()
     print("==== SUMMARY ====")
-    print(f"mAP@[.50:.95]: {AP:.4f}")
-    print(f"AP50:          {AP50:.4f}")
-    print(f"AR@100:        {AR100:.4f}")
+    print(f"mAP@[.50:.95]: {e.stats[0]:.4f}")
+    print(f"AP50:          {e.stats[1]:.4f}")
+    print(f"AR@100:        {e.stats[8]:.4f}")
 
 if __name__ == "__main__":
     main()
