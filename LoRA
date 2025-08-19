@@ -576,3 +576,78 @@ OUT=/home/vipuser/saves/lf_llava15_7b_coco_loraB_fast
   --overwrite_cache true \
   ${CKPT:+--resume_from_checkpoint "$CKPT"} \
   2>&1 | tee /home/vipuser/saves/train_fast.log
+——————————————————————————————————————————————————————————————————
+
+CKPT=$(ls -dt /home/vipuser/saves/lf_llava15_7b_coco_loraB/checkpoint-* 2>/dev/null | head -n 1); echo $CKPT
+# 在正在训练的终端按 Ctrl+C 停止
+mkdir -p /home/vipuser/lf_data/mini500
+shuf -n 500 /home/vipuser/lf_data/train2017_detjson_abs.jsonl > /home/vipuser/lf_data/mini500/train500.jsonl
+# （可选）做个 100 条的小验证集
+shuf -n 100 /home/vipuser/lf_data/val2017_detjson_abs.jsonl   > /home/vipuser/lf_data/mini500/val100.jsonl
+
+# 写 dataset_info.json（只含这两个数据名）
+cat > /home/vipuser/lf_data/mini500/dataset_info.json <<'JSON'
+{
+  "coco_detjson_train500": {
+    "file_name": "train500.jsonl",
+    "formatting": "sharegpt",
+    "columns": { "messages": "conversations", "images": "images" },
+    "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
+    "multi_modal": true
+  },
+  "coco_detjson_val100": {
+    "file_name": "val100.jsonl",
+    "formatting": "sharegpt",
+    "columns": { "messages": "conversations", "images": "images" },
+    "tags": { "role_tag": "from", "content_tag": "value", "user_tag": "user", "assistant_tag": "assistant" },
+    "multi_modal": true
+  }
+}
+JSON
+
+export HF_DATASETS_CACHE=/home/vipuser/hf_cache
+export OMP_NUM_THREADS=1
+export TOKENIZERS_PARALLELISM=false
+export PYTORCH_SDP_KERNEL=mem_efficient   # 不稳就改成: math
+export NVIDIA_TF32_OVERRIDE=1
+
+OUT=/home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs
+
+~/miniforge3/envs/lf/bin/llamafactory-cli train \
+  --stage sft --finetuning_type lora \
+  --model_name_or_path /home/vipuser/llava-1.5-7b-hf \
+  --dataset_dir /home/vipuser/lf_data/mini500 \
+  --dataset coco_detjson_train500 \
+  --template llava \
+  --cutoff_len 1024 \
+  --bf16 true --tf32 true --optim adamw_torch_fused \
+  --per_device_train_batch_size 2 --gradient_accumulation_steps 8 \
+  --num_train_epochs 1 --learning_rate 5e-05 \
+  --lora_rank 8 --lora_alpha 16 --lora_dropout 0.1 --lora_target all \
+  --do_train true --do_eval false \
+  --dataloader_num_workers 8 --preprocessing_num_workers 8 \
+  --output_dir $OUT --overwrite_output_dir true \
+  2>&1 | tee /home/vipuser/saves/train_500imgs.log
+
+~/miniforge3/envs/lf/bin/llamafactory-cli merge-lora \
+  --model_name_or_path   /home/vipuser/llava-1.5-7b-hf \
+  --adapter_name_or_path $OUT \
+  --output_dir           /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged
+
+# 先 500 张（快）
+PYTORCH_SDP_KERNEL=math \
+python -u /home/vipuser/eval_llava_coco_pretrain.py \
+  --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 500 --tokens 160 \
+  --out /home/vipuser/coco/llava_dt_lora_500imgs_subset.json
+
+# 看起来靠谱后，跑全量 val2017
+PYTORCH_SDP_KERNEL=math \
+python -u /home/vipuser/eval_llava_coco_pretrain.py \
+  --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --tokens 160 \
+  --out /home/vipuser/coco/llava_dt_lora_500imgs_full.json
