@@ -425,3 +425,22 @@ python -u /home/vipuser/eval_llava_coco_chat_SOLID.py \
   --subset 500 \
   --tokens 512 --min-conf 0.00 --nms-iou 0.60 --max-objects 50 \
   --out /home/vipuser/coco/LORA_500.json --save-raw
+  ——————————————————————————————————————————————
+# BASE
+python -u /home/vipuser/eval_llava_coco_chat_SOLID.py \
+  --model-dir /home/vipuser/llava-1.5-7b-hf \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 500 \
+  --tokens 512 --min-conf 0.00 --nms-iou 0.60 --max-objects 50 \
+  --out /home/vipuser/coco/BASE_500.json --save-raw
+
+# LoRA（用 *_merged）
+python -u /home/vipuser/eval_llava_coco_chat_SOLID.py \
+  --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 500 \
+  --tokens 512 --min-conf 0.00 --nms-iou 0.60 --max-objects 50 \
+  --out /home/vipuser/coco/LORA_500.json --save-raw
+
