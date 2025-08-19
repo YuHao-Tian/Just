@@ -1,656 +1,356 @@
-# /home/vipuser/image_caption.py
-import sys, torch
-from PIL import Image
-from transformers import AutoProcessor, LlavaForConditionalGeneration
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-MODEL_DIR = "/home/vipuser/llava-1.5-7b-hf"
-
-# 命令行参数：image_path [可选: 自定义提示词]
-image_path = sys.argv[1] if len(sys.argv) > 1 else "test.jpg"
-prompt_text = sys.argv[2] if len(sys.argv) > 2 else "用中文一句话描述这张图。"
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-dtype = torch.bfloat16 if device == "cuda" else torch.float32  # A100 推荐 bfloat16
-
-# 加载模型与处理器
-model = LlavaForConditionalGeneration.from_pretrained(
-    MODEL_DIR, torch_dtype=dtype, low_cpu_mem_usage=True
-).eval().to(device)
-processor = AutoProcessor.from_pretrained(MODEL_DIR)
-
-# 读图
-img = Image.open(image_path).convert("RGB")
-
-# 构造“图+问句”的聊天模板（关键：包含一条 image）
-messages = [{
-    "role": "user",
-    "content": [
-        {"type": "image"},
-        {"type": "text", "text": prompt_text}
-]}]
-prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
-
-# 编码并生成
-inputs = processor(images=img, text=prompt, return_tensors="pt")
-inputs = {k: (v.to(device) if hasattr(v, "to") else v) for k, v in inputs.items()}
-
-with torch.inference_mode():
-    outputs = model.generate(**inputs, max_new_tokens=64, do_sample=False)
-
-# 解码；部分模板前面会带 "ASSISTANT:"，这里顺便剥掉
-text = processor.decode(outputs[0], skip_special_tokens=True)
-print(text.split("ASSISTANT:")[-1].strip())
-
-PROMPT:
-python /home/vipuser/image_caption.py /path/to/your.jpg "用中文一句话描述这张图。"
-
-
-# 1) 安装 Miniforge（只装到你的 home，不动系统）
-cd ~
-wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
-bash Miniforge3-Linux-x86_64.sh -b -p $HOME/miniforge3
-
-# 2) 让当前 shell 接管新的 conda
-eval "$($HOME/miniforge3/bin/conda shell.bash hook)"
-conda -V                  # 应该看到 23/24.x 而不是 4.0.5
-which conda               # 应该指向 ~/miniforge3/bin/conda
-
-# 3) 创建你要的环境（随便 3.10/3.11 都有）
-conda create -n py310 python=3.10 -y
-conda activate py310
-python -V                 # Python 3.10.x
-
-
-
---------------------------------------
-
-import os, json, argparse, time, sys
+import os, json, argparse, time, re, math, collections
+from typing import List, Dict, Any, Optional
 import torch
 from PIL import Image
 from transformers import AutoProcessor, LlavaForConditionalGeneration
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
-def try_parse_json(text: str):
-    """Extract outermost JSON object if possible; else return empty schema."""
+
+# -------------------- utils --------------------
+
+def clamp01(x: float) -> float:
     try:
-        s, e = text.find("{"), text.rfind("}")
-        if s != -1 and e != -1 and e > s:
-            return json.loads(text[s:e+1])
+        return max(0.0, min(1.0, float(x)))
+    except Exception:
+        return 0.0
+
+def iou_xyxy(a: List[float], b: List[float]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - inter + 1e-12
+    return inter / union
+
+def nms_greedy(dets: List[Dict[str, Any]], iou_thr: float) -> List[Dict[str, Any]]:
+    if not dets:
+        return dets
+    dets = sorted(dets, key=lambda d: float(d.get("confidence", 0.0)), reverse=True)
+    keep, used = [], [False] * len(dets)
+    for i, di in enumerate(dets):
+        if used[i]:
+            continue
+        keep.append(di)
+        bi = di["box"]
+        for j in range(i + 1, len(dets)):
+            if used[j]:
+                continue
+            bj = dets[j]["box"]
+            if iou_xyxy(bi, bj) >= iou_thr:
+                used[j] = True
+    return keep
+
+def _strip_code_fences(s: str) -> str:
+    s = s.strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```[a-zA-Z0-9]*\n?", "", s).strip()
+        if s.endswith("```"):
+            s = s[:-3].strip()
+    return s
+
+def extract_first_json(text: str) -> Optional[str]:
+    """尽量从自由文本抓出一个合法 JSON（对象或数组）"""
+    text = _strip_code_fences(text)
+    # 先试整体
+    try:
+        json.loads(text)
+        return text
     except Exception:
         pass
-    return {"detections": []}
+    # 尝试对象 {...}
+    try:
+        s = text.index("{")
+        stack = 0
+        for i in range(s, len(text)):
+            if text[i] == "{": stack += 1
+            elif text[i] == "}":
+                stack -= 1
+                if stack == 0:
+                    cand = text[s:i+1]
+                    json.loads(cand)
+                    return cand
+    except Exception:
+        pass
+    # 尝试数组 [...]
+    try:
+        s = text.index("[")
+        stack = 0
+        for i in range(s, len(text)):
+            if text[i] == "[": stack += 1
+            elif text[i] == "]":
+                stack -= 1
+                if stack == 0:
+                    cand = text[s:i+1]
+                    json.loads(cand)
+                    return cand
+    except Exception:
+        pass
+    return None
 
-def build_canon_label(name2id):
-    """Return a canonicalizer mapping raw labels to official COCO-80 names (lower-case)."""
+def coerce_conf(v) -> float:
+    """把 confidence 变成 0..1 的 float；列表取 [0,1] 范围内最大值；奇怪格式降为 0.0"""
+    try:
+        if isinstance(v, (list, tuple)):
+            vals = [float(x) for x in v if isinstance(x, (int, float)) and 0.0 <= float(x) <= 1.0]
+            if len(vals) == 0:
+                return 0.0
+            return float(max(vals))
+        return clamp01(float(v))
+    except Exception:
+        return 0.0
+
+def valid_box_norm(box) -> bool:
+    if not isinstance(box, (list, tuple)) or len(box) != 4:
+        return False
+    try:
+        x1, y1, x2, y2 = [clamp01(b) for b in box]
+        return (x1 < x2) and (y1 < y2)
+    except Exception:
+        return False
+
+# -------- label normalization (robust) --------
+
+def build_canon_label(name2id: Dict[str, int]):
+    """将模型输出的各种写法归一到 COCO 官方小写类名；不认识的返回 None（后续会跳过，不报错）"""
     name_set = set(name2id.keys())
-    no_space_map = {n.replace(" ", ""): n for n in name_set}
-    syn = {
-        "people":"person","man":"person","woman":"person","men":"person","women":"person",
+    no_space = {n.replace(" ", ""): n for n in name_set}
+
+    synonyms = {
+        "people":"person","man":"person","men":"person","woman":"person","women":"person",
         "boy":"person","girl":"person","kid":"person","child":"person","baby":"person",
-        "motorbike":"motorcycle","aeroplane":"airplane","aircraft":"airplane",
+        "motorbike":"motorcycle","bike":"bicycle","aeroplane":"airplane","aircraft":"airplane",
         "trafficlight":"traffic light","traffic-light":"traffic light",
         "tvmonitor":"tv","tv monitor":"tv","television":"tv",
         "cellphone":"cell phone","mobile phone":"cell phone","smartphone":"cell phone","iphone":"cell phone",
-        "sofa":"couch","pottedplant":"potted plant","potted plant":"potted plant",
+        "sofa":"couch","pottedplant":"potted plant","potted  plant":"potted plant",
         "diningtable":"dining table","hand bag":"handbag","hand-bag":"handbag",
         "wineglass":"wine glass","wine-glass":"wine glass",
-        "tennis-racket":"tennis racket","baseball-bat":"baseball bat","baseball-glove":"baseball glove"
+        "tennis-racket":"tennis racket","baseball-bat":"baseball bat","baseball-glove":"baseball glove",
+        # 常见带修饰词
+        "baby giraffe":"giraffe","young giraffe":"giraffe","baby zebra":"zebra","baby elephant":"elephant",
+        "baby cow":"cow","baby bear":"bear","baby person":"person"
     }
-    def canon(raw: str):
-        s = (raw or "").lower().strip()
-        s = s.replace("_"," ").replace("-"," ")
-        while "  " in s: s = s.replace("  ", " ")
+    # 去掉这些修饰词后再试
+    drop_words = {"baby","young","small","little","tiny","big","large","adult","male","female","brown","white","black","red","green","blue","yellow"}
+
+    def canon(raw: str | None) -> Optional[str]:
+        s = (raw or "").lower().strip().replace("_", " ").replace("-", " ")
+        s = re.sub(r"\s+", " ", s)
+
         if s in name_set: return s
-        if s in syn: return syn[s]
-        key = s.replace(" ","")
-        if key in no_space_map: return no_space_map[key]
+        if s in synonyms: return synonyms[s]
+        key = s.replace(" ", "")
+        if key in no_space: return no_space[key]
+
+        # 去修饰词
+        toks = [w for w in s.split() if w not in drop_words]
+        s2 = " ".join(toks)
+        if s2 in name_set: return s2
+        if s2 in synonyms: return synonyms[s2]
+        key2 = s2.replace(" ", "")
+        if key2 in no_space: return no_space[key2]
+
+        # 包含匹配（优先长词）
+        for cname in sorted(name_set, key=len, reverse=True):
+            if cname in s2:
+                return cname
         return None
+
     return canon
 
-def gen_and_decode_reply(model, proc, img, prompt, device, max_new_tokens=192):
-    """Generate once and decode ONLY the assistant's newly generated text."""
-    inputs = proc(images=img, text=prompt, return_tensors="pt")
-    inputs = {k:(v.to(device) if hasattr(v,"to") else v) for k,v in inputs.items()}
-    with torch.inference_mode():
-        out = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-            return_dict_in_generate=True
-        )
-    seq = out.sequences[0]
-    # 只解码新生成的部分
-    gen_ids = seq[inputs["input_ids"].shape[-1]:]
-    return proc.decode(gen_ids, skip_special_tokens=True).strip()
 
-def labels_invalid(dets, allowed_lower: set):
-    """Return True if any label is clearly invalid (placeholder or not in allowed set)."""
-    for d in dets:
-        lab = str(d.get("label","")).lower()
-        if ("<" in lab) or (lab not in allowed_lower):
-            return True
-    return False
+# -------------------- main --------------------
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model-dir", default="/home/vipuser/llava-1.5-7b-hf")
-    ap.add_argument("--val-ann",  default="/home/vipuser/coco/annotations/instances_val2017.json")
-    ap.add_argument("--val-img",  default="/home/vipuser/coco/images/val2017")
-    ap.add_argument("--subset",   type=int, default=10, help="evaluate first N images (0 = all 5000)")
-    ap.add_argument("--tokens",   type=int, default=192)
-    ap.add_argument("--out",      default="/home/vipuser/coco/llava_dt_base.json")
+    ap.add_argument("--model-dir", required=True, help="LLaVA 模型目录（基座或合并后的 LoRA）")
+    ap.add_argument("--val-ann", required=True, help="COCO instances_val2017.json")
+    ap.add_argument("--val-img", required=True, help="COCO val2017 图像目录")
+    ap.add_argument("--subset", type=int, default=50, help="评估前 N 张（0=全部）")
+    ap.add_argument("--tokens", type=int, default=768, help="生成的最大新 token 数")
+    ap.add_argument("--out", required=True, help="COCO 提交格式检测结果 json 路径")
+    ap.add_argument("--max-objects", type=int, default=8, help="每图最多目标数")
+    ap.add_argument("--nms-iou", type=float, default=0.6, help="NMS IoU 阈值")
+    ap.add_argument("--min-conf", type=float, default=0.30, help="最小置信度")
+    ap.add_argument("--show-raw", action="store_true", help="打印前几张的原始回复")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype  = torch.bfloat16 if device == "cuda" else torch.float32
+    prefer_bf16 = torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] >= 8
+    dtype = torch.bfloat16 if prefer_bf16 else torch.float16 if device == "cuda" else torch.float32
 
-    # 1) Load base LLaVA-1.5-7B (no LoRA here)
-    model = LlavaForConditionalGeneration.from_pretrained(args.model_dir, torch_dtype=dtype).to(device).eval()
-    proc  = AutoProcessor.from_pretrained(args.model_dir)
-
-    # 2) COCO classes & images
-    coco = COCO(args.val_ann)
-    cats = coco.loadCats(coco.getCatIds())
-    class_names = [c["name"] for c in cats]              # official 80 names
-    name2id = {c["name"].lower(): c["id"] for c in cats}
-    canon_label = build_canon_label(name2id)
-    allowed = set([n.lower() for n in class_names])
-
-    imgs = coco.dataset["images"]
-    ids  = [im["id"] for im in imgs]
-    info = {im["id"]: (im["file_name"], im["width"], im["height"]) for im in imgs}
-    if args.subset and args.subset > 0:
-        ids = ids[:args.subset]
-        print(f"[info] subset = {len(ids)} images")
-
-    # 3) English instruction (NO placeholders, NO inline JSON example)
-    instr = (
-        "You are an object detection assistant. "
-        "Return ONLY a valid JSON object with key 'detections'. "
-        "Each item is: {\"label\": <one of the COCO-80 list>, \"box\": [x1,y1,x2,y2], \"confidence\": number in [0,1]}. "
-        "Coordinates are normalized to [0,1] with (x1,y1)=top-left and (x2,y2)=bottom-right. "
-        "If nothing is found, return {\"detections\":[]}. "
-        "Use ONLY these labels (singular, English): " + ", ".join(class_names) + ". "
-        "At most 15 objects. Output JSON only."
-    )
-
-    dt = []
-    ok_json = 0
-    t0 = time.time()
-
-    for k, img_id in enumerate(ids, 1):
-        fn, W, H = info[img_id]
-        img_path = os.path.join(args.val_img, fn)
-        img = Image.open(img_path).convert("RGB")
-
-        # Build chat messages: one image + one text instruction
-        messages = [{"role":"user","content":[
-            {"type":"image"},
-            {"type":"text","text": instr}
-        ]}]
-        prompt = proc.apply_chat_template(messages, add_generation_prompt=True)
-
-        # First try
-        txt  = gen_and_decode_reply(model, proc, img, prompt, device, max_new_tokens=args.tokens)
-        if k <= 5:
-            print(f"==== RAW REPLY (image {k}: {fn}) ====")
-            print(txt)
-
-        data = try_parse_json(txt)
-
-        # Retry if JSON invalid
-        if not isinstance(data.get("detections", None), list):
-            retry = [{"role":"user","content":[
-                {"type":"image"},
-                {"type":"text","text":"Only output valid JSON with the key 'detections'. No extra words."}
-            ]}]
-            rprompt = proc.apply_chat_template(retry, add_generation_prompt=True)
-            txt2 = gen_and_decode_reply(model, proc, img, rprompt, device, max_new_tokens=128)
-            if k <= 5:
-                print(f"==== RETRY JSON (image {k}) ====")
-                print(txt2)
-            data = try_parse_json(txt2)
-
-        dets = data.get("detections", [])
-        # Retry if labels look invalid (e.g., placeholders or not in COCO-80)
-        if isinstance(dets, list) and labels_invalid(dets, allowed):
-            retry2 = [{"role":"user","content":[
-                {"type":"image"},
-                {"type":"text","text":
-                 "Rewrite as JSON using ONLY these labels: " + ", ".join(class_names) +
-                 ". Do NOT use placeholders. Output JSON only."}
-            ]}]
-            rprompt2 = proc.apply_chat_template(retry2, add_generation_prompt=True)
-            txt_fix = gen_and_decode_reply(model, proc, img, rprompt2, device, max_new_tokens=128)
-            if k <= 5:
-                print(f"==== RETRY LABELS (image {k}) ====")
-                print(txt_fix)
-            data = try_parse_json(txt_fix)
-            dets = data.get("detections", [])
-
-        # Count JSON-parsable replies
-        if isinstance(dets, list):
-            ok_json += 1
-
-        # Convert normalized boxes to COCO bbox and append detections
-        for d in dets[:15]:
-            if not isinstance(d, dict) or "box" not in d:
-                continue
-            lab = canon_label(d.get("label", ""))
-            if lab is None:
-                continue
-            try:
-                x1, y1, x2, y2 = d["box"]
-            except Exception:
-                continue
-            x, y, w, h = x1 * W, y1 * H, (x2 - x1) * W, (y2 - y1) * H
-            dt.append({
-                "image_id": int(img_id),
-                "category_id": name2id[lab],
-                "bbox": [float(x), float(y), float(w), float(h)],
-                "score": float(d.get("confidence", 0.9))
-            })
-
-        print(f"[{k}/{len(ids)}] dt={len(dt)}")
-
-    # Save detections & report JSON success rate
-    with open(args.out, "w") as f:
-        json.dump(dt, f)
-    print(f"[saved] detections -> {args.out}")
-    jsucc = ok_json / len(ids) if len(ids) else 0.0
-    print(f"[info] JSON success rate: {ok_json}/{len(ids)} = {jsucc:.2%}")
-    print(f"[time] processed {len(ids)} images in {time.time()-t0:.1f}s")
-
-    # COCO evaluation
-    if len(dt) == 0:
-        print("[warn] No detections recorded. mAP will be 0.0. Check RAW/RETRY outputs above.")
-        sys.exit(0)
-
-    res = coco.loadRes(args.out)
-    e = COCOeval(coco, res, "bbox")
-    e.evaluate(); e.accumulate(); e.summarize()
-    mAP   = float(e.stats[0])   # AP@[.50:.95]
-    AP50  = float(e.stats[1])   # AP@0.50
-    AR100 = float(e.stats[8])   # AR@100
-    print(f"[metrics] mAP@[.50:.95]={mAP:.4f} | AP50={AP50:.4f} | AR@100={AR100:.4f}")
-
-if __name__ == "__main__":
-    main()
---------------------------------
-source ~/llavaenv/bin/activate
-pip install -U pycocotools
-
-python /home/vipuser/eval_llava_coco_pretrain.py \
-  --model-dir /home/vipuser/llava-1.5-7b-hf \
-  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
-  --val-img  /home/vipuser/coco/images/val2017 \
-  --subset 10 \
-  --out /home/vipuser/coco/llava_dt_base.json
-
-
-----------------------------------------
-import os, json, argparse, time, sys, re
-import torch
-from PIL import Image
-from transformers import AutoProcessor, LlavaForConditionalGeneration
-from pycocotools.coco import COCO
-from pycocotools.cocoeval import COCOeval
-
-# ---------- utilities ----------
-def try_parse_json(text: str):
+    print(f"[info] loading model from: {args.model_dir}")
     try:
-        s, e = text.find("{"), text.rfind("}")
-        if s != -1 and e != -1 and e > s:
-            return json.loads(text[s:e+1])
+        model = LlavaForConditionalGeneration.from_pretrained(args.model_dir, torch_dtype=dtype)
     except Exception:
-        pass
-    return {"detections": []}
-
-def to_float(x, default=0.0):
-    """Coerce x -> float in [0,1] if possible. Handle list/str/%/>1."""
-    try:
-        if isinstance(x, list) and len(x) > 0:
-            x = x[0]
-        if isinstance(x, str):
-            x = x.strip().replace("%", "")
-        v = float(x)
-        if v > 1.0:
-            # assume 0~100 percentage
-            v = v / 100.0 if v <= 100.0 else 1.0
-        if v < 0.0:
-            v = 0.0
-        if v > 1.0:
-            v = 1.0
-        return v
-    except Exception:
-        return default
-
-def to_box(b):
-    """Coerce various box formats to [x1,y1,x2,y2] in [0,1]; return None if fail."""
-    def flat4(lst):
-        out = []
-        for el in lst:
-            if isinstance(el, (list, tuple)):
-                out.extend(flat4(el))
-            else:
-                out.append(el)
-        return out
-    if isinstance(b, dict):
-        xs = [b.get("x1",0), b.get("y1",0), b.get("x2",0), b.get("y2",0)]
-        x1,y1,x2,y2 = [to_float(v,0.0) for v in xs]
-    elif isinstance(b, (list, tuple)):
-        lst = flat4(list(b))
-        if len(lst) < 4: return None
-        x1,y1,x2,y2 = [to_float(lst[i],0.0) for i in range(4)]
-    elif isinstance(b, str):
-        nums = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", b)
-        if len(nums) < 4: return None
-        x1,y1,x2,y2 = [to_float(nums[i],0.0) for i in range(4)]
-    else:
-        return None
-    # clamp to [0,1] and fix order
-    x1 = min(max(x1,0.0),1.0); y1 = min(max(y1,0.0),1.0)
-    x2 = min(max(x2,0.0),1.0); y2 = min(max(y2,0.0),1.0)
-    if x2 < x1: x1, x2 = x2, x1
-    if y2 < y1: y1, y2 = y2, y1
-    if (x2 - x1) <= 1e-6 or (y2 - y1) <= 1e-6:
-        return None
-    return [x1,y1,x2,y2]
-
-def build_canon_label(name2id):
-    name_set = set(name2id.keys())
-    no_space_map = {n.replace(" ", ""): n for n in name_set}
-    syn = {
-        "people":"person","man":"person","woman":"person","men":"person","women":"person",
-        "boy":"person","girl":"person","kid":"person","child":"person","baby":"person",
-        "motorbike":"motorcycle","aeroplane":"airplane","aircraft":"airplane",
-        "trafficlight":"traffic light","traffic-light":"traffic light",
-        "tvmonitor":"tv","tv monitor":"tv","television":"tv",
-        "cellphone":"cell phone","mobile phone":"cell phone","smartphone":"cell phone","iphone":"cell phone",
-        "sofa":"couch","pottedplant":"potted plant","potted plant":"potted plant",
-        "diningtable":"dining table","hand bag":"handbag","hand-bag":"handbag",
-        "wineglass":"wine glass","wine-glass":"wine glass",
-        "tennis-racket":"tennis racket","baseball-bat":"baseball bat","baseball-glove":"baseball glove"
-    }
-    def canon(raw: str):
-        s = (raw or "").lower().strip().replace("_"," ").replace("-"," ")
-        while "  " in s: s = s.replace("  "," ")
-        if s in name_set: return s
-        if s in syn: return syn[s]
-        key = s.replace(" ","")
-        if key in no_space_map: return no_space_map[key]
-        return None
-    return canon
-
-def gen_and_decode_reply(model, proc, img, prompt, device, max_new_tokens=160):
-    inputs = proc(images=img, text=prompt, return_tensors="pt")
-    inputs = {k:(v.to(device) if hasattr(v,"to") else v) for k,v in inputs.items()}
-    with torch.inference_mode():
-        out = model.generate(
-            **inputs, max_new_tokens=max_new_tokens, do_sample=False,
-            return_dict_in_generate=True
-        )
-    seq = out.sequences[0]
-    gen_ids = seq[inputs["input_ids"].shape[-1]:]  # decode only new tokens
-    return proc.decode(gen_ids, skip_special_tokens=True).strip()
-
-def labels_invalid(dets, allowed_lower: set):
-    for d in dets:
-        lab = str(d.get("label","")).lower()
-        if ("<" in lab) or (lab not in allowed_lower):
-            return True
-    return False
-
-# ---------- main ----------
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model-dir", default="/home/vipuser/llava-1.5-7b-hf")
-    ap.add_argument("--val-ann",  default="/home/vipuser/coco/annotations/instances_val2017.json")
-    ap.add_argument("--val-img",  default="/home/vipuser/coco/images/val2017")
-    ap.add_argument("--subset",   type=int, default=500, help="first N images (0=all 5000)")
-    ap.add_argument("--tokens",   type=int, default=160)
-    ap.add_argument("--out",      default="/home/vipuser/coco/llava_dt_base.json")
-    ap.add_argument("--metrics",  default="/home/vipuser/coco/llava_metrics_base.json")
-    ap.add_argument("--raw_debug_first", type=int, default=0)
-    args = ap.parse_args()
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype  = torch.bfloat16 if device == "cuda" else torch.float32
-
-    model = LlavaForConditionalGeneration.from_pretrained(args.model_dir, torch_dtype=dtype).to(device).eval()
-    proc  = AutoProcessor.from_pretrained(args.model_dir)
+        # 某些环境不支持 bf16，就回退 fp16
+        model = LlavaForConditionalGeneration.from_pretrained(args.model_dir, torch_dtype=torch.float16)
+    model.to(device).eval()
+    proc = AutoProcessor.from_pretrained(args.model_dir)
 
     coco = COCO(args.val_ann)
     cats = coco.loadCats(coco.getCatIds())
     class_names = [c["name"] for c in cats]
     name2id = {c["name"].lower(): c["id"] for c in cats}
     canon_label = build_canon_label(name2id)
-    allowed = set([n.lower() for n in class_names])
+    allowed = set(name2id.keys())
 
     imgs = coco.dataset["images"]
-    ids  = [im["id"] for im in imgs]
-    info = {im["id"]:(im["file_name"], im["width"], im["height"]) for im in imgs}
+    ids = [im["id"] for im in imgs]
+    info = {im["id"]: (im["file_name"], im.get("width", 0), im.get("height", 0)) for im in imgs}
     if args.subset and args.subset > 0:
         ids = ids[:args.subset]
     print(f"[info] subset = {len(ids)} images")
 
+    # 指令（不放 JSON 样例，减少“照抄模板”）
     instr = (
         "You are an object detection assistant. "
-        "Return ONLY a valid JSON object with key 'detections'. "
-        "Each item: {\"label\": <one of COCO-80>, \"box\": [x1,y1,x2,y2], \"confidence\": [0,1]}. "
+        "Return ONLY a valid JSON with key 'detections'. "
+        'Each item: {"label": <one COCO class>, "box": [x1,y1,x2,y2], "confidence": [0,1]}. '
         "Coordinates are normalized to [0,1] with (x1,y1)=top-left and (x2,y2)=bottom-right. "
-        "If nothing is found, return {\"detections\":[]}. "
+        f"At most {args.max_objects} objects. Do NOT repeat the same class or the same box. "
+        "If two boxes IoU>0.6, keep the one with higher confidence. "
         "Use ONLY these labels (singular, English): " + ", ".join(class_names) + ". "
-        "At most 15 objects. Output JSON only."
+        'If nothing is found, return {"detections":[]}. '
+        "Output JSON only."
     )
 
-    dt = []
+    def gen_and_decode(img, prompt, max_new_tokens):
+        inputs = proc(images=img, text=prompt, return_tensors="pt")
+        inputs = {k: (v.to(device) if hasattr(v, "to") else v) for k, v in inputs.items()}
+        with torch.inference_mode():
+            out = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,                # 关闭采样，稳定输出
+                return_dict_in_generate=True
+            )
+        seq = out.sequences[0]
+        gen_ids = seq[inputs["input_ids"].shape[-1]:]
+        return proc.decode(gen_ids, skip_special_tokens=True).strip()
+
+    all_dt = []
     ok_json = 0
+    unk_counter = collections.Counter()
     t0 = time.time()
 
     for k, img_id in enumerate(ids, 1):
         fn, W, H = info[img_id]
-        img = Image.open(os.path.join(args.val_img, fn)).convert("RGB")
+        path = os.path.join(args.val_img, fn)
+        img = Image.open(path).convert("RGB")
 
-        messages = [{"role":"user","content":[{"type":"image"},{"type":"text","text":instr}]}]
+        messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": instr}]}]
         prompt = proc.apply_chat_template(messages, add_generation_prompt=True)
 
-        # First pass
-        txt = gen_and_decode_reply(model, proc, img, prompt, device, max_new_tokens=args.tokens)
-        if k <= args.raw_debug_first:
-            print(f"==== RAW (image {k}: {fn}) ====\n{txt}")
-        data = try_parse_json(txt)
+        txt = gen_and_decode(img, prompt, args.tokens)
 
-        # Retry JSON
-        if not isinstance(data.get("detections", None), list):
-            retry = [{"role":"user","content":[
-                {"type":"image"},
-                {"type":"text","text":"Only output valid JSON with the key 'detections'. No extra words."}
-            ]}]
-            rprompt = proc.apply_chat_template(retry, add_generation_prompt=True)
-            txt2 = gen_and_decode_reply(model, proc, img, rprompt, device, max_new_tokens=128)
-            if k <= args.raw_debug_first:
-                print(f"==== RETRY-JSON (image {k}) ====\n{txt2}")
-            data = try_parse_json(txt2)
+        # 可选：打印前 3 张图的原始回复
+        if args.show_raw and k <= 3:
+            print(f"==== RAW REPLY (image {k}: {fn}) ====")
+            print(txt)
 
-        dets = data.get("detections", [])
-        # Retry labels
-        if isinstance(dets, list) and labels_invalid(dets, allowed):
-            retry2 = [{"role":"user","content":[
-                {"type":"image"},
-                {"type":"text","text":
-                 "Rewrite as JSON using ONLY these labels: " + ", ".join(class_names) +
-                 ". Do NOT use placeholders. Output JSON only."}
-            ]}]
-            rprompt2 = proc.apply_chat_template(retry2, add_generation_prompt=True)
-            txt_fix = gen_and_decode_reply(model, proc, img, rprompt2, device, max_new_tokens=128)
-            if k <= args.raw_debug_first:
-                print(f"==== RETRY-LABELS (image {k}) ====\n{txt_fix}")
-            data = try_parse_json(txt_fix)
-            dets = data.get("detections", [])
+        js = extract_first_json(txt)
+        dets_in = []
+        if js is not None:
+            try:
+                obj = json.loads(js)
+                if isinstance(obj, list):
+                    obj = {"detections": obj}
+                dets_in = obj.get("detections", []) if isinstance(obj, dict) else []
+            except Exception:
+                dets_in = []
+        # 无论是否为空，都当作“可解析一次”
+        ok_json += 1
 
-        if isinstance(dets, list):
-            ok_json += 1
+        # 归一 + 过滤 + 置信度处理
+        cleaned = []
+        for d in dets_in if isinstance(dets_in, list) else []:
+            raw_label = d.get("label", "")
+            lab = canon_label(raw_label)
+            if lab is None or lab not in allowed:
+                # 统计未知标签但不报错
+                if isinstance(raw_label, str) and raw_label:
+                    unk_counter[raw_label.lower().strip()] += 1
+                continue
 
-        # Convert and append
-        for d in dets[:15]:
-            if not isinstance(d, dict) or "box" not in d:
+            box = d.get("box", None)
+            if not isinstance(box, (list, tuple)) or len(box) != 4:
                 continue
-            lab = canon_label(d.get("label", ""))
-            if lab is None:
+            x1, y1, x2, y2 = [clamp01(b) for b in box]
+            x1, x2 = min(x1, x2), max(x1, x2)
+            y1, y2 = min(y1, y2), max(y1, y2)
+            if not (x1 < x2 and y1 < y2):
                 continue
-            box = to_box(d.get("box"))
-            if box is None:
+
+            conf = coerce_conf(d.get("confidence", 0.0))
+            if conf < args.min_conf:
                 continue
-            x1,y1,x2,y2 = box
-            x, y, w, h = x1*W, y1*H, (x2-x1)*W, (y2-y1)*H
-            if w <= 1e-6 or h <= 1e-6:
-                continue
-            score = to_float(d.get("confidence", 0.9), default=0.9)
-            dt.append({
+
+            cleaned.append({"label": lab, "box": [x1, y1, x2, y2], "confidence": conf})
+
+        # 类内 & 全局 NMS
+        by_cls = {}
+        for d in cleaned:
+            by_cls.setdefault(d["label"], []).append(d)
+        merged = []
+        for lab, group in by_cls.items():
+            merged.extend(nms_greedy(group, iou_thr=args.nms_iou))
+        merged = nms_greedy(merged, iou_thr=args.nms_iou)
+
+        # 同类仅保留最高分；限制最多数量
+        best_by_cls = {}
+        for d in merged:
+            lab = d["label"]
+            if (lab not in best_by_cls) or (d["confidence"] > best_by_cls[lab]["confidence"]):
+                best_by_cls[lab] = d
+        final_dets = sorted(best_by_cls.values(), key=lambda x: x["confidence"], reverse=True)[:args.max_objects]
+
+        # 写 COCO 格式
+        for d in final_dets:
+            lab = d["label"]  # 已经是标准化的
+            x1, y1, x2, y2 = d["box"]
+            x, y, w, h = x1 * W, y1 * H, (x2 - x1) * W, (y2 - y1) * H
+            all_dt.append({
                 "image_id": int(img_id),
                 "category_id": name2id[lab],
                 "bbox": [float(x), float(y), float(w), float(h)],
-                "score": float(score)
+                "score": float(clamp01(d["confidence"]))
             })
 
-        if (k % 50 == 0) or (k == len(ids)):
-            print(f"[{k}/{len(ids)}] dt={len(dt)}")
+        print(f"[{k}/{len(ids)}] dt={len(final_dets)}")
 
+    # 保存结果
     with open(args.out, "w") as f:
-        json.dump(dt, f)
-    jsucc = ok_json / len(ids) if len(ids) else 0.0
-    print(f"[saved] {args.out}")
+        json.dump(all_dt, f)
+    print(f"[saved] detections -> {args.out}")
+    jsucc = ok_json / max(1, len(ids))
     print(f"[info] JSON success rate: {ok_json}/{len(ids)} = {jsucc:.2%}")
-    print(f"[time] processed {len(ids)} images in {time.time()-t0:.1f}s")
+    if unk_counter:
+        topk = ", ".join([f"{k}:{v}" for k, v in unk_counter.most_common(5)])
+        print(f"[info] skipped unknown labels (top): {topk}")
+    print(f"[time] processed {len(ids)} images in {time.time() - t0:.1f}s")
 
-    metrics = {"mAP": 0.0, "AP50": 0.0, "AP75": 0.0, "AR@1": 0.0, "AR@10": 0.0, "AR@100": 0.0,
-               "json_success_rate": jsucc, "images": len(ids), "detections": len(dt)}
-    if len(dt) == 0:
-        print("[warn] No detections recorded. mAP will be 0.0. Proceed to LoRA finetuning or adjust prompts.")
-    else:
-        res = coco.loadRes(args.out)
-        e = COCOeval(coco, res, "bbox")
-        e.evaluate(); e.accumulate(); e.summarize()
-        metrics.update({
-            "mAP":   float(e.stats[0]),
-            "AP50":  float(e.stats[1]),
-            "AP75":  float(e.stats[2]),
-            "AR@1":  float(e.stats[6]),
-            "AR@10": float(e.stats[7]),
-            "AR@100":float(e.stats[8]),
-        })
-        print(f"[metrics] mAP@[.50:.95]={metrics['mAP']:.4f} | AP50={metrics['AP50']:.4f} | AR@100={metrics['AR@100']:.4f}")
+    if len(all_dt) == 0:
+        print("[warn] No detections recorded. mAP will be 0.0.")
+        return
 
-    if args.metrics:
-        with open(args.metrics, "w") as f:
-            json.dump(metrics, f, indent=2)
-        print(f"[saved] {args.metrics}")
+    # 评测
+    res = coco.loadRes(args.out)
+    e = COCOeval(coco, res, "bbox")
+    e.evaluate(); e.accumulate(); e.summarize()
+    mAP, AP50, AR100 = float(e.stats[0]), float(e.stats[1]), float(e.stats[8])
+    print(f"[metrics] mAP@[.50:.95]={mAP:.4f} | AP50={AP50:.4f} | AR@100={AR100:.4f}")
+
 
 if __name__ == "__main__":
     main()
-
----------------------------------------
-source ~/llavaenv/bin/activate
-pip install -U pycocotools
-
-python /home/vipuser/eval_llava_coco_pretrain.py \
-  --model-dir /home/vipuser/llava-1.5-7b-hf \
-  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
-  --val-img  /home/vipuser/coco/images/val2017 \
-  --subset 500 \
-  --tokens 160 \
-  --out /home/vipuser/coco/llava_dt_base_500.json \
-  | tee /home/vipuser/coco/eval_base_500.log
-----------------------------------------------
-
-python -u /home/vipuser/eval_llava_coco_pretrain.py \
-  --model-dir /home/vipuser/llava-1.5-7b-hf \
-  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
-  --val-img  /home/vipuser/coco/images/val2017 \
-  --subset 0 --tokens 160 \
-  --out /home/vipuser/coco/llava_dt_base_full.json
-
-  ---------------------------------
-
-  python /home/vipuser/coco_to_lf_jsonl.py \
-  --ann /home/vipuser/coco/annotations/instances_train2017.json \
-  --imgroot /home/vipuser/coco/images \
-  --split train2017 \
-  --out /home/vipuser/lf_data/train2017_detjson.jsonl \
-  --max_dets 15
--------------------------------------------
-python /home/vipuser/coco_to_lf_jsonl.py \
-  --ann /home/vipuser/coco/annotations/instances_val2017.json \
-  --imgroot /home/vipuser/coco/images \
-  --split val2017 \
-  --out /home/vipuser/lf_data/val2017_detjson.jsonl \
-  --max_dets 15
-# 可用 head/tail/shuf 采样，或者全部当 eval
-
-————————————————————————————————————————————
-python - <<'PY'
-import torch, sys
-print("python:", sys.executable)
-print("torch:", torch.__version__, "cuda_runtime_in_wheel:", torch.version.cuda)
-print("cuda_available:", torch.cuda.is_available())
-if torch.cuda.is_available():
-    print("device0:", torch.cuda.get_device_name(0))
-    import torch.backends.cudnn as cudnn
-    print("cudnn:", cudnn.version())
-    # 做一次小算子，确保可用
-    x = torch.randn(1024, 1024, device="cuda")
-    y = x @ x.t()
-    print("matmul_ok:", float(y[0,0]).__class__ is float or True)
-PY
-——————————————————————
-# 在 lf 环境里，直接用环境内的可执行文件最稳
-PYTORCH_SDP_KERNEL=math \
-~/miniforge3/envs/lf/bin/llamafactory-cli train \
-  --stage sft \
-  --finetuning_type lora \
-  --model_name_or_path /home/vipuser/llava-1.5-7b-hf \
-  --dataset_dir /home/vipuser/lf_data \
-  --dataset coco_detjson_train \
-  --eval_dataset coco_detjson_val \
-  --template llava \
-  --cutoff_len 4096 \
-  --learning_rate 5e-05 \
-  --num_train_epochs 3 \
-  --per_device_train_batch_size 2 \
-  --gradient_accumulation_steps 8 \
-  --lora_rank 8 \
-  --lora_alpha 16 \
-  --lora_dropout 0.1 \
-  --lora_target all \
-  --do_train true \
-  --do_eval true \
-  --overwrite_output_dir true \
-  2>&1 | tee /home/vipuser/saves/train_full.log
-
-  ——————————————————————————————————
-# 先用基座跑 50 张做冒烟测试
-PYTORCH_SDP_KERNEL=math \
-python -u /home/vipuser/eval_llava_coco_pretrain.py \
-  --model-dir /home/vipuser/llava-1.5-7b-hf \
-  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
-  --val-img  /home/vipuser/coco/images/val2017 \
-  --subset 50 --tokens 1024 \
-  --out /home/vipuser/coco/llava_dt_BASE_50.json \
-  --show-raw
-————————————————————
-sed -i 's/args.model-dir/args.model_dir/g; s/args.proc-dir/args.proc_dir/g' /home/vipuser/eval_llava_coco_pretrain.py
-————————————————————————
-python -u /home/vipuser/eval_llava_coco_det.py \
-  --model-dir /home/vipuser/llava-1.5-7b-hf \
-  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
-  --val-img  /home/vipuser/coco/images/val2017 \
-  --subset 50 \
-  --tokens 768 \
-  --min-conf 0.35 \
-  --nms-iou 0.55 \
-  --max-objects 6 \
-  --out /home/vipuser/coco/llava_dt_BASE_50.json \
-  --show-raw
-
