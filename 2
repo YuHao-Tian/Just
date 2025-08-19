@@ -402,3 +402,10 @@ Unknown command: merge-lora.
 |   llamafactory-cli version: show version info                      |
 ----------------------------------------------------------------------
 (lf) vipuser@ubuntu22:~$ 
+
+~/miniforge3/envs/lf/bin/llamafactory-cli export \
+  --model_name_or_path /home/vipuser/llava-1.5-7b-hf \
+  --adapter_name_or_path /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs \
+  --export_dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged
+
+ls -lah /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged
