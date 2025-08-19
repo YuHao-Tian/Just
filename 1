@@ -417,9 +417,9 @@ _______________
   --tokens 256 --min-conf 0.05 --nms-iou 0.60 --max-objects 12 \
   --out /home/vipuser/coco/smoke_BASE.json --save-raw
 ——————————————————
-# LoRA（合并后）
+# LoRA（合并后：用 *_merged 这个目录）
 python -u /home/vipuser/eval_llava_coco_chat_SOLID.py \
-  --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_merged \
+  --model-dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged \
   --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
   --val-img  /home/vipuser/coco/images/val2017 \
   --subset 500 \
