@@ -1,0 +1,324 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+COCO eval for LLaVA-1.5 (BASE vs LoRA) — SOLID chat-template version
+- 使用 chat template：messages=[{"role":"user","content":[{"type":"image"},{"type":"text", prompt}]}]
+  → 不要在 prompt 里写 <image>！
+- 严格 JSON 指令 + 鲁棒解析（对象/数组、```json 围栏、尾括号修复、前缀清理）
+- min-conf 过滤 + 类内 NMS + 全局 NMS + 最大框数限制
+- 贪心解码，显式 eos/pad，按张打印进度
+"""
+
+import os, re, json, argparse, time
+from typing import Any, Dict, List, Optional, Tuple
+
+import torch
+from PIL import Image
+from transformers import AutoProcessor, LlavaForConditionalGeneration
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
+
+# ---------------------------
+# Robust JSON extraction
+# ---------------------------
+
+def _strip_code_fences(text: str) -> str:
+    t = text.strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-zA-Z0-9]*\n?", "", t).strip()
+        if t.endswith("```"):
+            t = t[:-3].strip()
+    return t
+
+def parse_detections(text: str) -> List[Dict[str, Any]]:
+    """
+    支持以下输出形态：
+      - {"detections":[...]} 或 {"objects":[...]}
+      - 顶层即数组：[ {...}, {...} ]
+      - 允许 ```json 包裹、ASSISTANT: 前缀、轻量尾部补齐
+    返回 list[dict]
+    """
+    t = _strip_code_fences(text)
+    t = re.sub(r"^(ASSISTANT|Assistant|assistant)\s*:\s*", "", t).strip()
+
+    def _loads(s):
+        try: return json.loads(s)
+        except Exception: return None
+
+    obj = _loads(t)
+    base = t
+    if obj is None:
+        m = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", t)
+        if m:
+            base = m.group(1)
+            obj = _loads(base)
+        if obj is None:
+            for suf in ("}]}", "}}", "]}", "}"):
+                obj = _loads(base + suf)
+                if obj is not None:
+                    break
+
+    if isinstance(obj, dict):
+        dets = obj.get("detections")
+        if not isinstance(dets, list):
+            dets = obj.get("objects")
+        return dets if isinstance(dets, list) else []
+    if isinstance(obj, list):
+        return obj
+    return []
+
+# ---------------------------
+# IoU & NMS (COCO xywh)
+# ---------------------------
+
+def iou_xywh(b1, b2) -> float:
+    x1, y1, w1, h1 = b1
+    x2, y2, w2, h2 = b2
+    xa1, ya1, xa2, ya2 = x1, y1, x1 + w1, y1 + h1
+    xb1, yb1, xb2, yb2 = x2, y2, x2 + w2, y2 + h2
+    inter_w = max(0.0, min(xa2, xb2) - max(xa1, xb1))
+    inter_h = max(0.0, min(ya2, yb2) - max(ya1, yb1))
+    inter = inter_w * inter_h
+    union = w1*h1 + w2*h2 - inter + 1e-6
+    return inter / union
+
+def nms_xywh(dets: List[Dict[str, Any]], iou_thr: float) -> List[Dict[str, Any]]:
+    dets_sorted = sorted(dets, key=lambda d: float(d.get("score", 0.0)), reverse=True)
+    keep: List[Dict[str, Any]] = []
+    for d in dets_sorted:
+        ok = True
+        for k in keep:
+            if iou_xywh(d["bbox"], k["bbox"]) > iou_thr:
+                ok = False; break
+        if ok: keep.append(d)
+    return keep
+
+# ---------------------------
+# Label canonicalization
+# ---------------------------
+
+COMMON_ALIASES = {
+    "tv": "tv", "television": "tv", "tv monitor": "tv", "tvmonitor": "tv",
+    "motorbike": "motorcycle", "aeroplane": "airplane",
+    "trafficlight": "traffic light", "firehydrant": "fire hydrant", "hydrant": "fire hydrant",
+    "sportsball": "sports ball", "wineglass": "wine glass",
+    "tennis-racket": "tennis racket", "baseball-bat": "baseball bat", "baseball-glove": "baseball glove",
+    "sofa": "couch", "bike": "bicycle"
+}
+
+def canon_label(name: str, valid: set) -> Optional[str]:
+    n = (name or "").strip().lower().replace("_"," ").replace("-"," ")
+    while "  " in n: n = n.replace("  ", " ")
+    n = COMMON_ALIASES.get(n, n)
+    if n.endswith("s") and n[:-1] in valid:
+        n = n[:-1]
+    return n if n in valid else None
+
+# ---------------------------
+# Prompt（注意：这里不要写 <image>）
+# ---------------------------
+
+def build_prompt(class_names: List[str], max_objects: int) -> str:
+    cls_str = ", ".join(class_names)
+    return (
+        "Detect objects in the image and return ONLY ONE valid JSON object with key 'detections'.\n"
+        "Each item: {\"label\":\"<one_of_COCO80>\", \"box\":[x1,y1,x2,y2], \"confidence\":0.xx}.\n"
+        "Rules: coordinates are normalized to [0,1], top-left (x1,y1), bottom-right (x2,y2), x1<x2, y1<y2.\n"
+        "Round to 3 decimals. Use ONLY these labels (singular, English): " + cls_str + ".\n"
+        f"At most {max_objects} objects. Omit low-confidence objects.\n"
+        "No markdown, no code fences, no explanations. Output JSON only."
+    )
+
+# ---------------------------
+# Generation via chat template
+# ---------------------------
+
+def gen_text_chat(model, processor, image: Image.Image, prompt: str, device: str, max_new_tokens: int) -> str:
+    # 构造 messages：图片放在 content 里；prompt 里不包含 <image>
+    messages = [{"role":"user","content":[{"type":"image"},{"type":"text","text": prompt}]}]
+    chat = processor.apply_chat_template(messages, add_generation_prompt=True)
+    # 这里用 chat 文本 + 单张 PIL 图像；占位符与特征数自动对齐
+    inputs = processor(text=chat, images=image, return_tensors="pt")
+    inputs = {k:(v.to(device) if hasattr(v, "to") else v) for k,v in inputs.items()}
+    with torch.inference_mode():
+        out = model.generate(
+            **inputs,
+            do_sample=False,
+            max_new_tokens=max_new_tokens,
+            return_dict_in_generate=True,
+            eos_token_id=getattr(processor.tokenizer, "eos_token_id", None),
+            pad_token_id=getattr(processor.tokenizer, "pad_token_id", None) or getattr(processor.tokenizer, "eos_token_id", None),
+        )
+    # 仅解码“新生成”的 tokens（排除 prompt）
+    seq = out.sequences[0]
+    gen_ids = seq[inputs["input_ids"].shape[-1]:]
+    return processor.decode(gen_ids, skip_special_tokens=True).strip()
+
+# ---------------------------
+# Main
+# ---------------------------
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model-dir", required=True, type=str)
+    ap.add_argument("--val-ann",   required=True, type=str)
+    ap.add_argument("--val-img",   required=True, type=str)
+    ap.add_argument("--subset",    type=int, default=500)
+    ap.add_argument("--tokens",    type=int, default=512)
+    ap.add_argument("--min-conf",  type=float, default=0.30)
+    ap.add_argument("--nms-iou",   type=float, default=0.60)
+    ap.add_argument("--max-objects", type=int, default=12)
+    ap.add_argument("--out",       required=True, type=str)
+    ap.add_argument("--save-raw",  action="store_true")
+    ap.add_argument("--progress-every", type=int, default=10)
+    args = ap.parse_args()
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype  = torch.float16 if device == "cuda" else torch.float32
+
+    print(f"[Load] {args.model_dir}")
+    model = LlavaForConditionalGeneration.from_pretrained(
+        args.model_dir, torch_dtype=dtype, device_map="auto" if device=="cuda" else None
+    )
+    processor = AutoProcessor.from_pretrained(args.model_dir)
+
+    # 清理生成配置里的采样项，避免无用警告
+    try:
+        gc = model.generation_config
+        gc.do_sample = False
+        gc.num_beams = 1
+        for k in ("temperature","top_p","top_k","typical_p"):
+            if hasattr(gc, k): setattr(gc, k, None)
+    except Exception:
+        pass
+
+    print(f"[COCO] Anns: {args.val_ann}\n[COCO] Images dir: {args.val_img}")
+    coco = COCO(args.val_ann)
+
+    # 类别
+    cats = coco.loadCats(coco.getCatIds())
+    id2name = {c["id"]: c["name"].strip().lower() for c in cats}
+    name2id = {v: k for k, v in id2name.items()}
+    class_names = [id2name[i] for i in sorted(id2name.keys())]
+    valid_names = set(class_names)
+
+    # 图像 ID
+    img_ids = coco.getImgIds()
+    if args.subset and args.subset > 0:
+        img_ids = img_ids[: args.subset]
+    info = {im["id"]: im for im in coco.dataset["images"]}
+
+    prompt = build_prompt(class_names, args.max_objects)
+    strict_retry = "Return ONLY one JSON object with key 'detections' and no extra text."
+
+    dt: List[Dict[str, Any]] = []
+    raw_dump: List[Tuple[int, str]] = []
+
+    print(f"[Eval] Images: {len(img_ids)} | tokens={args.tokens} min_conf={args.min_conf} "
+          f"nms_iou={args.nms_iou} max_objects={args.max_objects}")
+
+    t0 = time.time()
+    for i, img_id in enumerate(img_ids, 1):
+        meta = info[img_id]
+        W, H = int(meta["width"]), int(meta["height"])
+        img_path = os.path.join(args.val_img, meta["file_name"])
+        try:
+            image = Image.open(img_path).convert("RGB")
+        except Exception as e:
+            print(f"[Warn] open image failed: {img_path} ({e})")
+            continue
+
+        # 第一次生成
+        text = gen_text_chat(model, processor, image, prompt, device, max_new_tokens=args.tokens)
+        dets = parse_detections(text)
+
+        # 空则严格重试
+        if not dets:
+            t2 = gen_text_chat(model, processor, image, strict_retry, device, max_new_tokens=args.tokens)
+            d2 = parse_detections(t2)
+            if len(d2) > len(dets):
+                dets, text = d2, t2
+
+        if args.save_raw:
+            raw_dump.append((img_id, text))
+
+        # 收集 raw 框
+        raw: List[Dict[str, Any]] = []
+        for d in dets[: (args.max_objects * 3)]:
+            if not isinstance(d, dict): continue
+            lab = canon_label(str(d.get("label", "")), valid_names)
+            if lab is None: continue
+
+            box = d.get("box", d.get("bbox"))
+            if not (isinstance(box, (list, tuple)) and len(box) == 4): continue
+            try:
+                x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+            except Exception:
+                continue
+
+            # 归一化/像素兼容
+            normalized = max(x1, y1, x2, y2) <= 1.2
+            if normalized:
+                x1 = max(0.0, min(1.0, x1)); y1 = max(0.0, min(1.0, y1))
+                x2 = max(0.0, min(1.0, x2)); y2 = max(0.0, min(1.0, y2))
+                if x2 <= x1 or y2 <= y1: continue
+                x = x1 * W; y = y1 * H; w = (x2 - x1) * W; h = (y2 - y1) * H
+            else:
+                if x2 <= x1 or y2 <= y1: continue
+                x = x1; y = y1; w = (x2 - x1); h = (y2 - y1)
+
+            if w <= 1 or h <= 1: continue
+
+            s = d.get("confidence", d.get("score", 0.5))
+            try: s = float(s)
+            except Exception: s = 0.5
+            if s < 0.0: s = 0.0
+            if s > 1.0: s = 1.0
+
+            raw.append({
+                "image_id": int(img_id),
+                "category_id": int(name2id[lab]),
+                "bbox": [float(x), float(y), float(w), float(h)],
+                "score": float(s),
+            })
+
+        # 后处理：阈值 -> 类内 NMS -> 全局 NMS -> 限量
+        kept = [r for r in raw if r["score"] >= args.min_conf]
+        by_cls: Dict[int, List[Dict[str, Any]]] = {}
+        for r in kept: by_cls.setdefault(int(r["category_id"]), []).append(r)
+        kept2: List[Dict[str, Any]] = []
+        for _, items in by_cls.items(): kept2.extend(nms_xywh(items, args.nms_iou))
+        kept3 = nms_xywh(kept2, args.nms_iou)
+        kept3 = sorted(kept3, key=lambda d: d["score"], reverse=True)[: args.max_objects]
+        dt.extend(kept3)
+
+        if (i <= 5) or (i % args.progress_every == 0):
+            print(f"[{i}/{len(img_ids)}] dt={len(dt)} (raw this img: {len(raw)} -> kept {len(kept3)})")
+
+    # 保存
+    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    with open(args.out, "w", encoding="utf-8") as f:
+        json.dump(dt, f)
+    print(f"[Save] Detections -> {args.out} ({len(dt)} items)")
+
+    if args.save_raw:
+        raw_path = os.path.splitext(args.out)[0] + ".raw.txt"
+        with open(raw_path, "w", encoding="utf-8") as f:
+            for img_id, t in raw_dump: f.write(f"# image_id={img_id}\n{t}\n\n")
+        print(f"[Save] Raw generations -> {raw_path}")
+
+    # 评估
+    print("[COCOeval] Running evaluation…")
+    if len(dt) == 0:
+        print("[Warn] No detections, skipping COCOeval.")
+        return
+    cocoDt = coco.loadRes(args.out)
+    e = COCOeval(coco, cocoDt, iouType="bbox")
+    e.evaluate(); e.accumulate(); e.summarize()
+    print("==== SUMMARY ====")
+    print(f"mAP@[.50:.95]: {e.stats[0]:.4f}")
+    print(f"AP50:          {e.stats[1]:.4f}")
+    print(f"AR@100:        {e.stats[8]:.4f}")
+
+if __name__ == "__main__":
+    main()
