@@ -382,3 +382,23 @@ python -u /home/vipuser/eval_llava_coco_pretrain.py \
   --tokens 160 \
   --out /home/vipuser/coco/llava_dt_lora_500imgs_full.json
 
+_______________
+(lf) vipuser@ubuntu22:~$ ~/miniforge3/envs/lf/bin/llamafactory-cli merge-lora \
+  --model_name_or_path   /home/vipuser/llava-1.5-7b-hf \
+  --adapter_name_or_path /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs \
+  --output_dir           /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs_merged
+/home/vipuser/miniforge3/envs/lf/lib/python3.10/site-packages/jieba/_compat.py:18: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources
+Unknown command: merge-lora.
+----------------------------------------------------------------------
+| Usage:                                                             |
+|   llamafactory-cli api -h: launch an OpenAI-style API server       |
+|   llamafactory-cli chat -h: launch a chat interface in CLI         |
+|   llamafactory-cli eval -h: evaluate models                        |
+|   llamafactory-cli export -h: merge LoRA adapters and export model |
+|   llamafactory-cli train -h: train models                          |
+|   llamafactory-cli webchat -h: launch a chat interface in Web UI   |
+|   llamafactory-cli webui: launch LlamaBoard                        |
+|   llamafactory-cli version: show version info                      |
+----------------------------------------------------------------------
+(lf) vipuser@ubuntu22:~$ 
