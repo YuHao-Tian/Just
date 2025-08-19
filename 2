@@ -263,4 +263,6 @@ PYTORCH_SDP_KERNEL=mem_efficient NVIDIA_TF32_OVERRIDE=1 HF_DATASETS_CACHE=/home/
  --dataloader_num_workers 8 --preprocessing_num_workers 8 \
  --output_dir /home/vipuser/saves/lf_llava15_7b_coco_loraB_500imgs --overwrite_output_dir true \
  2>&1 | tee /home/vipuser/saves/train_500imgs.log
+________________
+ValueError: The number of images does not match the number of <image> tokens in [{'content': 'You are an object detection assistant. Return ONLY a valid JSON object with key \'detections\'. Each item: {"label": <one of COCO-80>, "box": [x1,y1,x2,y2], "confidence": [0,1]}. Coordinates are normalized to [0,1] with (x1,y1)=top-left and (x2,y2)=bottom-right. If nothing is found, return {"detections":[]}. Output JSON only.', 'role': 'user'}, {'content': '{"detections": [{"label": "giraffe", "box": [0.30384976525821594, 0.21798437499999998, 1.0, 0.9056249999999999], "confidence": 1.0}, {"label": "giraffe", "box": [0.06068075117370892, 0.1414375, 0.9840140845070422, 0.88734375], "confidence": 1.0}]}', 'role': 'assistant'}].
 
