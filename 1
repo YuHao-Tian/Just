@@ -363,3 +363,6 @@ python -u /home/vipuser/eval_llava_coco_det.py \
   --tokens 512 \
   --out /home/vipuser/coco/llava_dt_LORA_50.json \
   --show-raw
+_________
+# 方案A：用 sed 一把替换两种写法
+sed -i 's/args\.show-raw/args.show_raw/g; s/args\.show\b/args.show_raw/g' /home/vipuser/eval_llava_coco_det.py
