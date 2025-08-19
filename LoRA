@@ -540,3 +540,39 @@ PYTORCH_SDP_KERNEL=math \
   --max_steps 5 \
   --overwrite_output_dir true \
   2>&1 | tee /home/vipuser/saves/mini_sanity.log
+——————————————————————————————————————————————
+# 让注意力用更快的内核；不稳定再改成 math
+export PYTORCH_SDP_KERNEL=mem_efficient
+export NVIDIA_TF32_OVERRIDE=1
+
+# 如果你有最新 ckpt，就先取出来
+CKPT=$(ls -dt /home/vipuser/saves/lf_llava15_7b_coco_loraB/checkpoint-* 2>/dev/null | head -n 1)
+
+# 用一个新的输出目录，避免和旧日志混在一起
+OUT=/home/vipuser/saves/lf_llava15_7b_coco_loraB_fast
+
+~/miniforge3/envs/lf/bin/llamafactory-cli train \
+  --stage sft \
+  --finetuning_type lora \
+  --model_name_or_path /home/vipuser/llava-1.5-7b-hf \
+  --dataset_dir /home/vipuser/lf_data \
+  --dataset coco_detjson_train \
+  --eval_dataset coco_detjson_val \
+  --template llava \
+  --cutoff_len 2048 \
+  --bf16 true \
+  --tf32 true \
+  --optim adamw_torch_fused \
+  --per_device_train_batch_size 2 \
+  --gradient_accumulation_steps 8 \
+  --num_train_epochs 3 \
+  --learning_rate 5e-05 \
+  --lora_rank 8 --lora_alpha 16 --lora_dropout 0.1 --lora_target all \
+  --do_train true --do_eval true \
+  --dataloader_num_workers 8 \
+  --preprocessing_num_workers 8 \
+  --gradient_checkpointing false \
+  --overwrite_output_dir true \
+  --overwrite_cache true \
+  ${CKPT:+--resume_from_checkpoint "$CKPT"} \
+  2>&1 | tee /home/vipuser/saves/train_fast.log
