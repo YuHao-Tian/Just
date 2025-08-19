@@ -639,4 +639,6 @@ python -u /home/vipuser/eval_llava_coco_pretrain.py \
   --subset 50 --tokens 1024 \
   --out /home/vipuser/coco/llava_dt_BASE_50.json \
   --show-raw
+————————————————————
+sed -i 's/args.model-dir/args.model_dir/g; s/args.proc-dir/args.proc_dir/g' /home/vipuser/eval_llava_coco_pretrain.py
 
