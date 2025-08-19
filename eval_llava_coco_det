@@ -160,18 +160,19 @@ def main():
         ids = ids[:args.subset]
     print(f"[info] subset = {len(ids)} images")
 
-    # 统一英文指令（不在提示里放 JSON 示例，减少“抄模板”）
-    instr = (
-        "You are an object detection assistant. "
-        "Return ONLY a valid JSON object with key 'detections'. "
-        "Each item is: {\"label\": <one COCO class>, \"box\": [x1,y1,x2,y2], \"confidence\": [0,1]}. "
-        "Coordinates are normalized to [0,1] with (x1,y1)=top-left and (x2,y2)=bottom-right. "
-        "At most {K} objects. Do NOT repeat the same class or the same box. "
-        "If two boxes IoU>0.6 keep the one with higher confidence. "
-        "Use ONLY these labels (singular, English): ".format(K=args.max_objects)
-        + ", ".join(class_names) + ". "
-        "If nothing is found, return {\"detections\":[]}."
-    )
+# 统一英文指令（不在提示里放 JSON 示例，减少“抄模板”）
+instr = (
+    "You are an object detection assistant. "
+    "Return ONLY a valid JSON object with key 'detections'. "
+    "Each item is: {\"label\": <one COCO class>, \"box\": [x1,y1,x2,y2], \"confidence\": [0,1]}. "
+    "Coordinates are normalized to [0,1] with (x1,y1)=top-left and (x2,y2)=bottom-right. "
+    f"At most {args.max_objects} objects. Do NOT repeat the same class or the same box. "
+    "If two boxes IoU>0.6 keep the one with higher confidence. "
+    "Use ONLY these labels (singular, English): "
+    + ", ".join(class_names)
+    + ". If nothing is found, return {\"detections\":[]}."
+)
+
 
     dt = []
     ok_json = 0
