@@ -142,7 +142,6 @@ def _pick_color(name):
 
 def _text_size(draw, font, txt):
     try:
-        # Pillow >=9.2
         w = draw.textlength(txt, font=font)
         h = font.size if hasattr(font, "size") else 16
         return w, h
