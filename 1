@@ -379,3 +379,13 @@ python -u /home/vipuser/eval_llava_coco_det.py \
   --out /home/vipuser/coco/llava_dt_LORA_50.json \
   --show-raw
 
+——————————————————————————————————————————
+python -u /home/vipuser/eval_llava_coco_det.py \
+  --model-dir /home/vipuser/llava-1.5-7b-hf \
+  --val-ann  /home/vipuser/coco/annotations/instances_val2017.json \
+  --val-img  /home/vipuser/coco/images/val2017 \
+  --subset 50 \
+  --tokens 1024 \
+  --max-objects 20 --min-conf 0.10 --nms-iou 0.5 \
+  --out /home/vipuser/coco/llava_dt_BASE_50.json \
+  --show-raw
