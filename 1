@@ -602,3 +602,14 @@ python -u /home/vipuser/yoloenv/vis_from_json.py \
   --vis-dir /home/vipuser/coco/yolo11x_vis_from_json \
   --vis-conf 0.35 \
   --limit 30
+  ___________________
+ yolo11s:
+  python -u /home/vipuser/yoloenv/yolo_coco_full_sota.py \
+  --model yolo11s.pt \
+  --val-img /home/vipuser/coco/images/val2017 \
+  --val-ann /home/vipuser/coco/annotations/instances_val2017.json \
+  --imgsz 960 --conf 0.001 --iou 0.7 \
+  --batch 8 --workers 4 \
+  --agnostic --extra-nms 0.7 --max-det 300 --device 0 \
+  --out /home/vipuser/coco/yolo11s_dt_val2017.json
+
