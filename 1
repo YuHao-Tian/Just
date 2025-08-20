@@ -514,7 +514,7 @@ python -u /home/vipuser/unified_llava_det.py \
   --save-raw
 
 _____________________________
-python -u /home/vipuser/yoloevn/yolo8_coco_export.py \
+python -u /home/vipuser/yoloenv/yolo8_coco_export.py \
   --model yolov8s.pt \
   --val-img /home/vipuser/coco/images/val2017 \
   --val-ann /home/vipuser/coco/annotations/instances_val2017.json \
@@ -523,7 +523,7 @@ python -u /home/vipuser/yoloevn/yolo8_coco_export.py \
   --out /home/vipuser/coco/yolo8_dt_val50.json \
   --vis-dir /home/vipuser/coco/yolo8_vis_val50
 
-  python -u /home/vipuser/yoloevn/eval_coco_json.py \
+  python -u /home/vipuser/yoloenv/eval_coco_json.py \
   /home/vipuser/coco/annotations/instances_val2017.json \
   /home/vipuser/coco/yolo8_dt_val50.json
 
