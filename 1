@@ -612,4 +612,7 @@ python -u /home/vipuser/yoloenv/vis_from_json.py \
   --batch 8 --workers 4 \
   --agnostic --extra-nms 0.7 --max-det 300 --device 0 \
   --out /home/vipuser/coco/yolo11s_dt_val2017.json
-
+评估：
+python -u /home/vipuser/yoloenv/eval_coco_json.py \
+  --ann /home/vipuser/coco/annotations/instances_val2017.json \
+  --dt  /home/vipuser/coco/yolo11s_dt_val2017.json
