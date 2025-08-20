@@ -616,3 +616,15 @@ python -u /home/vipuser/yoloenv/vis_from_json.py \
 python -u /home/vipuser/yoloenv/eval_coco_json.py \
   --ann /home/vipuser/coco/annotations/instances_val2017.json \
   --dt  /home/vipuser/coco/yolo11s_dt_val2017.json
+————————————————————————————————————
+yolo detect train \
+  model=yolo11s.pt \
+  data=/home/vipuser/yoloenv/coco80_local.yaml \
+  imgsz=960 epochs=100 \
+  batch=-1 device=0 workers=8 cache=ram \
+  optimizer=auto cos_lr=True \
+  lr0=0.003 lrf=0.12 momentum=0.937 weight_decay=0.0005 \
+  hsv_h=0.015 hsv_s=0.7 hsv_v=0.4 \
+  fliplr=0.5 flipud=0.0 translate=0.1 scale=0.5 shear=0.0 \
+  mosaic=1.0 mixup=0.15 close_mosaic=10 copy_paste=0.0 \
+  patience=30
