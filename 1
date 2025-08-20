@@ -531,7 +531,7 @@ python -u /home/vipuser/yoloenv/yolo8_coco_export.py \
 # 激活你跑 YOLO 的环境
 source ~/yoloenv/bin/activate
 
-python -u /home/vipuser/yoloevn/yolo8_coco_export.py \
+python -u /home/vipuser/yoloenv/yolo8_coco_export.py \
   --model yolov8x.pt \
   --val-img /home/vipuser/coco/images/val2017 \
   --val-ann /home/vipuser/coco/annotations/instances_val2017.json \
@@ -540,11 +540,11 @@ python -u /home/vipuser/yoloevn/yolo8_coco_export.py \
   --out /home/vipuser/coco/yolov8x_dt_val50.json \
   --vis-dir /home/vipuser/coco/yolov8x_vis_val50
 
-python -u /home/vipuser/yoloevn/eval_coco_json.py \
+python -u /home/vipuser/yoloenv/eval_coco_json.py \
   /home/vipuser/coco/annotations/instances_val2017.json \
   /home/vipuser/coco/yolov8x_dt_val50.json
 
-python -u /home/vipuser/yoloevn/yolo8_coco_export.py \
+python -u /home/vipuser/yoloenv/yolo8_coco_export.py \
   --model yolo11x.pt \
   --val-img /home/vipuser/coco/images/val2017 \
   --val-ann /home/vipuser/coco/annotations/instances_val2017.json \
