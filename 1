@@ -514,16 +514,18 @@ python -u /home/vipuser/unified_llava_det.py \
   --save-raw
 
 _____________________________
-python -u /home/vipuser/yolo8_coco_export.py \
+python -u /home/vipuser/yoloevn/yolo8_coco_export.py \
   --model yolov8s.pt \
   --val-img /home/vipuser/coco/images/val2017 \
   --val-ann /home/vipuser/coco/annotations/instances_val2017.json \
-  --limit 50 --shuffle \          # 随机抽 50 张；去掉 --shuffle 则取前 50 张
+  --limit 50 --shuffle \
   --imgsz 640 --conf 0.25 --iou 0.7 --device 0 \
   --out /home/vipuser/coco/yolo8_dt_val50.json \
   --vis-dir /home/vipuser/coco/yolo8_vis_val50
-_____________
-python -u /home/vipuser/eval_coco_json.py \
+
+  python -u /home/vipuser/yoloevn/eval_coco_json.py \
   /home/vipuser/coco/annotations/instances_val2017.json \
   /home/vipuser/coco/yolo8_dt_val50.json
+
+
 
