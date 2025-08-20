@@ -565,3 +565,21 @@ python -u /home/vipuser/yoloenv/yolo8_coco_export.py \
   --out /home/vipuser/coco/yolov8x_dt_val50.json \
   --vis-dir /home/vipuser/coco/yolov8x_vis_val50
 
+python -u /home/vipuser/yoloenv/yolo_coco_full_sota.py \
+  --model yolo11x.pt \
+  --val-img /home/vipuser/coco/images/val2017 \
+  --val-ann /home/vipuser/coco/annotations/instances_val2017.json \
+  --imgsz 1280 \
+  --conf 0.001 \
+  --iou 0.7 \
+  --tta \
+  --batch 8 \
+  --agnostic \                
+  --extra-nms 0.7 \
+  --max-det 300 \
+  --device 0 \
+  --out /home/vipuser/coco/yolo11x_dt_val2017_full.json
+  
+python -u /home/vipuser/yoloenv/eval_coco_json.py \
+  /home/vipuser/coco/annotations/instances_val2017.json \
+  /home/vipuser/coco/yolo11x_dt_val2017_full.json
