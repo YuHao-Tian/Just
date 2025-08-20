@@ -593,3 +593,12 @@ python -u /home/vipuser/yoloenv/yolo_coco_full_sota.py \
 python -u /home/vipuser/yoloenv/eval_coco_json.py \
   /home/vipuser/coco/annotations/instances_val2017.json \
   /home/vipuser/coco/yolo11x_dt_val2017_full.json
+————————————————————————————————————————————————————
+随机抽 30 张渲染到新目录：
+python -u /home/vipuser/yoloenv/vis_from_json.py \
+  --val-img /home/vipuser/coco/images/val2017 \
+  --val-ann /home/vipuser/coco/annotations/instances_val2017.json \
+  --dets /home/vipuser/coco/yolo11x_dt_val2017_full.json \
+  --vis-dir /home/vipuser/coco/yolo11x_vis_from_json \
+  --vis-conf 0.35 \
+  --limit 30
