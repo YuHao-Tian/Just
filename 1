@@ -522,3 +522,8 @@ python -u /home/vipuser/yolo8_coco_export.py \
   --imgsz 640 --conf 0.25 --iou 0.7 --device 0 \
   --out /home/vipuser/coco/yolo8_dt_val50.json \
   --vis-dir /home/vipuser/coco/yolo8_vis_val50
+_____________
+python -u /home/vipuser/eval_coco_json.py \
+  /home/vipuser/coco/annotations/instances_val2017.json \
+  /home/vipuser/coco/yolo8_dt_val50.json
+
